@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { BattlefieldCanvas } from './components/BattlefieldCanvas';
 import { MessagePanel } from './components/MessagePanel';
 import { FlowchartPanel } from './components/FlowchartPanel';
@@ -17,10 +17,10 @@ interface Model {
   default?: boolean;
 }
 
-// WebSocket URL - use current host in production
+// WebSocket URL - use current host in production, wss:// for HTTPS
 const WS_URL = import.meta.env.DEV
   ? 'ws://localhost:3000/ws'
-  : `ws://${window.location.host}/ws`;
+  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
 const emptyBattleState: BattleState = {
   tick: 0,
@@ -48,6 +48,12 @@ function App() {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [apiKeyValid, setApiKeyValid] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+
+  // Ref to hold send function so handleWSMessage doesn't depend on it
+  const sendRef = useRef<(message: unknown) => void>(() => {});
+  // Track if we're waiting for battle_ready to auto-start
+  const pendingBattleStart = useRef(false);
 
   // Handle WebSocket messages
   const handleWSMessage = useCallback((msg: unknown) => {
@@ -86,9 +92,11 @@ function App() {
       case 'lieutenants': {
         const data = message.data as { lieutenants: Lieutenant[] };
         setLieutenants(data.lieutenants);
-        if (!selectedLieutenant && data.lieutenants.length > 0) {
-          setSelectedLieutenant(data.lieutenants[0]!.id);
-        }
+        // Auto-select first lieutenant if none selected
+        setSelectedLieutenant(prev => {
+          if (!prev && data.lieutenants.length > 0) return data.lieutenants[0]!.id;
+          return prev;
+        });
         break;
       }
 
@@ -112,6 +120,11 @@ function App() {
 
       case 'battle_ready': {
         setIsInitializing(false);
+        // Auto-start battle once briefing is complete
+        if (pendingBattleStart.current) {
+          pendingBattleStart.current = false;
+          sendRef.current({ type: 'start_battle', data: {} });
+        }
         break;
       }
 
@@ -121,6 +134,7 @@ function App() {
       }
 
       case 'battle_paused': {
+        setIsPaused(true);
         setBattleState(prev => ({ ...prev, running: false }));
         break;
       }
@@ -133,9 +147,19 @@ function App() {
         break;
       }
     }
-  }, [selectedLieutenant]);
+      case 'battle_resumed': {
+        setIsPaused(false);
+        setBattleState(prev => ({ ...prev, running: true }));
+        break;
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { status, send } = useWebSocket(WS_URL, handleWSMessage);
+
+  // Keep sendRef in sync so handleWSMessage can call it without a dependency
+  sendRef.current = send;
 
   // API Key handling
   const handleSetApiKey = useCallback((apiKey: string) => {
@@ -151,11 +175,21 @@ function App() {
   // Battle controls
   const handleStartBattle = useCallback(() => {
     setIsInitializing(true);
+    pendingBattleStart.current = true;
     send({ type: 'init_battle', data: { scenario: 'basic', briefings } });
-    setTimeout(() => {
-      send({ type: 'start_battle', data: {} });
-    }, 1000);
+    // start_battle will be sent automatically when battle_ready arrives
   }, [send, briefings]);
+
+  const handlePauseBattle = useCallback(() => {
+    if (isPaused) {
+      send({ type: 'resume_battle', data: {} });
+      setIsPaused(false);
+      setBattleState(prev => ({ ...prev, running: true }));
+    } else {
+      send({ type: 'pause_battle', data: {} });
+      setIsPaused(true);
+    }
+  }, [send, isPaused]);
 
   const handleSendOrder = useCallback((lieutenantId: string, order: string) => {
     send({ type: 'send_order', data: { lieutenantId, order } });
@@ -191,6 +225,9 @@ function App() {
               <span className={`status ${battleState.running ? 'running' : 'paused'}`}>
                 {battleState.running ? '● LIVE' : '◯ PAUSED'}
               </span>
+              <button className="pause-button" onClick={handlePauseBattle}>
+                {isPaused ? '▶ Resume' : '⏸ Pause'}
+              </button>
             </>
           )}
           {apiKeyValid && (

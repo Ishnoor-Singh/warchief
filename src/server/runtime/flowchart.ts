@@ -85,48 +85,65 @@ export function queueEvent(runtime: FlowchartRuntime, event: GameEvent): void {
 // Process all queued events and return resulting actions
 export function processEvents(runtime: FlowchartRuntime): GameAction[] {
   const actions: GameAction[] = [];
-  
+
   while (runtime.eventQueue.length > 0) {
     const event = runtime.eventQueue.shift()!;
-    const action = processEvent(runtime, event);
-    if (action) {
-      actions.push(action);
-    }
+    const result = processEvent(runtime, event);
+    actions.push(...result);
   }
-  
+
   return actions;
 }
 
 // Process a single event through the flowchart
-function processEvent(runtime: FlowchartRuntime, event: GameEvent): GameAction | null {
+function processEvent(runtime: FlowchartRuntime, event: GameEvent): GameAction[] {
   const { flowchart } = runtime;
-  
+
   // Find all nodes that match this event type, sorted by priority
   const matchingNodes = flowchart.nodes
     .filter(node => node.on === event.type)
     .sort((a, b) => (b.priority || 0) - (a.priority || 0));
-  
+
   // Try each node until one matches
   for (const node of matchingNodes) {
     if (evaluateCondition(node.condition || '', event)) {
       runtime.currentNodeId = node.id;
-      
-      // Execute the action
-      const action = node.action;
-      
-      // If there's a chained node, queue a synthetic event to trigger it
-      // (This is simplified - real impl might need more sophistication)
-      
-      return action;
+      const actions: GameAction[] = [node.action];
+
+      // Follow next chain (with depth limit to prevent infinite loops)
+      let nextId = node.next;
+      let depth = 0;
+      while (nextId && depth < 10) {
+        const nextNode = flowchart.nodes.find(n => n.id === nextId);
+        if (!nextNode) break;
+
+        runtime.currentNodeId = nextNode.id;
+        if (!nextNode.condition || evaluateCondition(nextNode.condition, event)) {
+          actions.push(nextNode.action);
+          nextId = nextNode.next;
+        } else {
+          nextId = nextNode.else;
+        }
+        depth++;
+      }
+
+      return actions;
+    } else if (node.else) {
+      // Condition failed — follow else branch
+      const elseNode = flowchart.nodes.find(n => n.id === node.else);
+      if (elseNode) {
+        runtime.currentNodeId = elseNode.id;
+        return [elseNode.action];
+      }
     }
   }
-  
+
   // No matching node - use default action for certain events
   if (event.type === 'under_attack' || event.type === 'enemy_spotted') {
-    return flowchart.defaultAction;
+    return [flowchart.defaultAction];
   }
-  
-  return null;
+
+  return [];
 }
 
 // Helper to create common flowcharts for testing

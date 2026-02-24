@@ -115,15 +115,42 @@ describe('Lieutenant Input Builder', () => {
 
     it('adapts tone based on personality', () => {
       const aggressivePrompt = buildLieutenantPrompt(baseContext);
-      
+
       const cautiousContext: LieutenantContext = {
         ...baseContext,
         identity: { ...baseIdentity, personality: 'cautious' },
       };
       const cautiousPrompt = buildLieutenantPrompt(cautiousContext);
-      
+
       // Both should work but have different guidance
       expect(aggressivePrompt).not.toBe(cautiousPrompt);
+    });
+
+    it('includes visible enemy positions when provided', () => {
+      const contextWithEnemies: LieutenantContext = {
+        ...baseContext,
+        visibleEnemies: [
+          { id: 'e_s1_0', position: { x: 300, y: 100 }, distance: 200 },
+          { id: 'e_s1_1', position: { x: 310, y: 110 }, distance: 210 },
+        ],
+      };
+
+      const prompt = buildLieutenantPrompt(contextWithEnemies);
+
+      expect(prompt).toContain('e_s1_0');
+      expect(prompt).toContain('300');
+      expect(prompt).toContain('Enemy');
+    });
+
+    it('shows no enemies when visibleEnemies is empty', () => {
+      const contextNoEnemies: LieutenantContext = {
+        ...baseContext,
+        visibleEnemies: [],
+      };
+
+      const prompt = buildLieutenantPrompt(contextNoEnemies);
+
+      expect(prompt).toContain('No enemies currently visible');
     });
   });
 });

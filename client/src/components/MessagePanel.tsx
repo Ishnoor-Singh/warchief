@@ -6,6 +6,7 @@ interface Props {
   lieutenants: Lieutenant[];
   selectedLieutenant: string | null;
   onSendOrder: (lieutenantId: string, order: string) => void;
+  isObserverMode?: boolean;
 }
 
 function formatTime(timestamp: number): string {
@@ -13,25 +14,28 @@ function formatTime(timestamp: number): string {
   return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function getSenderName(from: string, lieutenants: Lieutenant[]): string {
-  if (from === 'commander') return 'You';
+function getSenderName(from: string, lieutenants: Lieutenant[], isObserver?: boolean): string {
+  if (from === 'commander') return isObserver ? 'Human Cmd' : 'You';
+  if (from === 'player_ai') return 'Player AI Cmd';
   if (from === 'intel') return 'Intel';
   const lt = lieutenants.find(l => l.id === from);
   return lt?.name || from;
 }
 
-export function MessagePanel({ messages, lieutenants, selectedLieutenant, onSendOrder }: Props) {
+export function MessagePanel({ messages, lieutenants, selectedLieutenant, onSendOrder, isObserverMode }: Props) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Filter messages for selected lieutenant (or show all if none selected)
-  const filteredMessages = selectedLieutenant
-    ? messages.filter(m =>
-        m.from === selectedLieutenant ||
-        m.to === selectedLieutenant ||
-        m.from === 'intel'
-      )
-    : messages;
+  // In observer mode, show all messages; otherwise filter for selected lieutenant
+  const filteredMessages = isObserverMode
+    ? messages
+    : selectedLieutenant
+      ? messages.filter(m =>
+          m.from === selectedLieutenant ||
+          m.to === selectedLieutenant ||
+          m.from === 'intel'
+        )
+      : messages;
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -68,7 +72,7 @@ export function MessagePanel({ messages, lieutenants, selectedLieutenant, onSend
             <div key={msg.id} className={`message ${msg.type}`}>
               <div className="message-header">
                 <span className="message-from">
-                  {getSenderName(msg.from, lieutenants)}
+                  {getSenderName(msg.from, lieutenants, isObserverMode)}
                 </span>
                 <span className="message-time">
                   {formatTime(msg.timestamp)}
@@ -87,28 +91,36 @@ export function MessagePanel({ messages, lieutenants, selectedLieutenant, onSend
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="message-input-container">
-        <input
-          type="text"
-          className="message-input"
-          placeholder={
-            selectedLieutenant
-              ? `Order ${lieutenant?.name || 'lieutenant'}...`
-              : 'Select a lieutenant first'
-          }
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={!selectedLieutenant}
-        />
-        <button
-          className="send-button"
-          onClick={handleSend}
-          disabled={!selectedLieutenant || !input.trim() || lieutenant?.busy}
-        >
-          {lieutenant?.busy ? '...' : 'Send'}
-        </button>
-      </div>
+      {isObserverMode ? (
+        <div className="message-input-container" style={{ justifyContent: 'center', padding: '8px 12px' }}>
+          <span style={{ color: '#666', fontSize: 13, fontStyle: 'italic' }}>
+            Observer mode — AI commanders are issuing orders
+          </span>
+        </div>
+      ) : (
+        <div className="message-input-container">
+          <input
+            type="text"
+            className="message-input"
+            placeholder={
+              selectedLieutenant
+                ? `Order ${lieutenant?.name || 'lieutenant'}...`
+                : 'Select a lieutenant first'
+            }
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={!selectedLieutenant}
+          />
+          <button
+            className="send-button"
+            onClick={handleSend}
+            disabled={!selectedLieutenant || !input.trim() || lieutenant?.busy}
+          >
+            {lieutenant?.busy ? '...' : 'Send'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -88,3 +88,5 @@ export interface DetailedBattleSummary {
   player: { alive: number; dead: number; total: number };
   enemy: { alive: number; dead: number; total: number };
 }
+
+export type GameMode = 'human_vs_ai' | 'ai_vs_ai';

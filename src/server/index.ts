@@ -19,6 +19,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.PORT || 3000;
 
+export type GameMode = 'human_vs_ai' | 'ai_vs_ai';
+
 // Game state per connection
 interface GameSession {
   ws: WebSocket;
@@ -28,6 +30,8 @@ interface GameSession {
   lieutenants: Lieutenant[];             // Player's lieutenants
   enemyLieutenants: Lieutenant[];        // Enemy LLM lieutenants
   aiCommander: AICommander | null;       // Enemy AI commander
+  playerAICommander: AICommander | null; // Player AI commander (ai_vs_ai mode)
+  gameMode: GameMode;
   timer: NodeJS.Timeout | null;
   anthropicClient: LLMClient | null;
   aiCommanderInterval: number;           // How often AI commander acts (in ticks)
@@ -80,6 +84,8 @@ wss.on('connection', (ws) => {
     lieutenants: [],
     enemyLieutenants: [],
     aiCommander: null,
+    playerAICommander: null,
+    gameMode: 'human_vs_ai',
     timer: null,
     anthropicClient: null,
     aiCommanderInterval: AI_COMMANDER_INTERVAL,
@@ -94,6 +100,7 @@ wss.on('connection', (ws) => {
       models: AVAILABLE_MODELS,
       selectedModel: session.model,
       needsApiKey: true,
+      gameMode: session.gameMode,
     },
   });
 
@@ -163,11 +170,27 @@ async function handleMessage(session: GameSession, message: { type: string; data
       break;
     }
 
+    case 'set_game_mode': {
+      const { mode } = message.data as { mode: GameMode };
+      if (mode === 'human_vs_ai' || mode === 'ai_vs_ai') {
+        session.gameMode = mode;
+        send(ws, { type: 'game_mode_set', data: { mode } });
+      }
+      break;
+    }
+
     case 'init_battle': {
-      const { scenario, briefings } = message.data as {
+      const { scenario, briefings, gameMode, playerPersonality, enemyPersonality } = message.data as {
         scenario: 'basic' | 'assault';
         briefings: Record<string, string>;
+        gameMode?: GameMode;
+        playerPersonality?: 'aggressive' | 'cautious' | 'balanced';
+        enemyPersonality?: 'aggressive' | 'cautious' | 'balanced';
       };
+
+      if (gameMode) {
+        session.gameMode = gameMode;
+      }
 
       // Create scenario
       const scenarioData = scenario === 'assault' ? createAssaultScenario() : createBasicScenario();
@@ -253,26 +276,47 @@ async function handleMessage(session: GameSession, message: { type: string; data
         }),
       ];
 
-      // Create AI commander
+      // Create AI commander for enemy
       session.aiCommander = createAICommander({
-        personality: 'balanced',
+        personality: enemyPersonality || 'balanced',
         lieutenantIds: session.enemyLieutenants.map(lt => lt.id),
         model: session.model,
+        team: 'enemy',
+        name: 'Enemy Commander',
       });
 
-      // Process initial briefings for player lieutenants
+      // Create player AI commander if in ai_vs_ai mode
+      if (session.gameMode === 'ai_vs_ai') {
+        session.playerAICommander = createAICommander({
+          personality: playerPersonality || 'balanced',
+          lieutenantIds: session.lieutenants.map(lt => lt.id),
+          model: session.model,
+          team: 'player',
+          name: 'Player Commander',
+        });
+      } else {
+        session.playerAICommander = null;
+      }
+
+      // Process initial briefings
       if (session.apiKey && session.anthropicClient) {
         const briefingPromises: Promise<void>[] = [];
 
-        for (const lt of session.lieutenants) {
-          const briefing = briefings[lt.id];
-          if (briefing) {
-            briefingPromises.push(processInitialBriefing(session, lt, briefing));
+        if (session.gameMode === 'ai_vs_ai' && session.playerAICommander) {
+          // In AI vs AI mode, brief player lieutenants via player AI commander
+          briefingPromises.push(briefTeamLieutenants(session, session.playerAICommander, session.lieutenants));
+        } else {
+          // In human vs AI mode, use player-provided briefings
+          for (const lt of session.lieutenants) {
+            const briefing = briefings[lt.id];
+            if (briefing) {
+              briefingPromises.push(processInitialBriefing(session, lt, briefing));
+            }
           }
         }
 
         // Brief enemy lieutenants via AI commander
-        briefingPromises.push(briefEnemyLieutenants(session));
+        briefingPromises.push(briefTeamLieutenants(session, session.aiCommander, session.enemyLieutenants));
 
         await Promise.all(briefingPromises);
       }
@@ -281,7 +325,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
       sendBattleState(session);
       sendLieutenants(session);
 
-      send(ws, { type: 'battle_ready', data: {} });
+      send(ws, { type: 'battle_ready', data: { gameMode: session.gameMode } });
       break;
     }
 
@@ -311,8 +355,20 @@ async function handleMessage(session: GameSession, message: { type: string; data
             session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
             session.simulation.battle.tick > 0
           ) {
-            runAICommanderCycle(session).catch(err => {
-              console.error('AI Commander error:', err);
+            runAICommanderCycle(session, session.aiCommander, session.enemyLieutenants).catch(err => {
+              console.error('Enemy AI Commander error:', err);
+            });
+          }
+
+          // Player AI Commander cycle (ai_vs_ai mode)
+          if (
+            session.playerAICommander &&
+            !session.playerAICommander.busy &&
+            session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
+            session.simulation.battle.tick > 0
+          ) {
+            runAICommanderCycle(session, session.playerAICommander, session.lieutenants).catch(err => {
+              console.error('Player AI Commander error:', err);
             });
           }
 
@@ -332,7 +388,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
         }
       }, 100);
 
-      send(ws, { type: 'battle_started', data: {} });
+      send(ws, { type: 'battle_started', data: { gameMode: session.gameMode } });
       break;
     }
 
@@ -367,8 +423,20 @@ async function handleMessage(session: GameSession, message: { type: string; data
               session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
               session.simulation.battle.tick > 0
             ) {
-              runAICommanderCycle(session).catch(err => {
-                console.error('AI Commander error:', err);
+              runAICommanderCycle(session, session.aiCommander, session.enemyLieutenants).catch(err => {
+                console.error('Enemy AI Commander error:', err);
+              });
+            }
+
+            // Player AI Commander cycle (ai_vs_ai mode)
+            if (
+              session.playerAICommander &&
+              !session.playerAICommander.busy &&
+              session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
+              session.simulation.battle.tick > 0
+            ) {
+              runAICommanderCycle(session, session.playerAICommander, session.lieutenants).catch(err => {
+                console.error('Player AI Commander error:', err);
               });
             }
 
@@ -391,6 +459,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
 
     case 'send_order': {
       const { lieutenantId, order } = message.data as { lieutenantId: string; order: string };
+
+      if (session.gameMode === 'ai_vs_ai') {
+        send(ws, { type: 'error', data: { message: 'Cannot send manual orders in AI vs AI mode' } });
+        return;
+      }
 
       if (!session.apiKey || !session.anthropicClient) {
         send(ws, { type: 'error', data: { message: 'API key not set' } });
@@ -497,7 +570,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
 function sendBattleState(session: GameSession) {
   if (!session.simulation) return;
 
-  const filtered = getFilteredStateForTeam(session.simulation, 'player');
+  // In AI vs AI mode, show full battlefield (omniscient observer view)
+  // In human vs AI mode, show player-team filtered view with fog of war
+  const filtered = session.gameMode === 'ai_vs_ai'
+    ? getFullStateForObserver(session.simulation)
+    : getFilteredStateForTeam(session.simulation, 'player');
 
   // Also include currentNodeId from runtimes for flowchart highlighting
   const activeNodes: Record<string, string | null> = {};
@@ -512,6 +589,39 @@ function sendBattleState(session: GameSession) {
       activeNodes,
     },
   });
+}
+
+// Get full battle state for observer mode (AI vs AI) - no fog of war
+function getFullStateForObserver(sim: SimulationState) {
+  const agents: Array<{
+    id: string; type: string; team: string; position: { x: number; y: number };
+    health: number; maxHealth: number; morale: number; currentAction: string | null;
+    formation: string; alive: boolean;
+  }> = [];
+
+  for (const agent of sim.battle.agents.values()) {
+    agents.push({
+      id: agent.id,
+      type: agent.type,
+      team: agent.team,
+      position: { x: agent.position.x, y: agent.position.y },
+      health: agent.health,
+      maxHealth: agent.maxHealth,
+      morale: agent.morale,
+      currentAction: agent.currentAction,
+      formation: agent.formation,
+      alive: agent.alive,
+    });
+  }
+
+  return {
+    tick: sim.battle.tick,
+    agents,
+    width: sim.battle.width,
+    height: sim.battle.height,
+    running: sim.battle.running,
+    winner: sim.battle.winner,
+  };
 }
 
 function sendLieutenants(session: GameSession) {
@@ -622,36 +732,37 @@ async function processOrderWithModel(
   return processOrder(lieutenant, order, context, client);
 }
 
-// Brief enemy lieutenants through the AI commander
-async function briefEnemyLieutenants(session: GameSession) {
-  if (!session.anthropicClient || !session.aiCommander || !session.simulation) return;
+// Brief lieutenants through an AI commander (works for either team)
+async function briefTeamLieutenants(session: GameSession, commander: AICommander, lieutenants: Lieutenant[]) {
+  if (!session.anthropicClient || !session.simulation) return;
 
   // Generate initial orders from AI commander
-  const result = await generateCommanderOrders(session.aiCommander, session.simulation, session.anthropicClient);
+  const result = await generateCommanderOrders(commander, session.simulation, session.anthropicClient);
 
   if (result.success && result.orders) {
     for (const commanderOrder of result.orders) {
-      const enemyLt = session.enemyLieutenants.find(lt => lt.id === commanderOrder.lieutenantId);
-      if (enemyLt) {
-        const context = buildOrderContext(session, enemyLt);
-        const ltResult = await processOrderWithModel(session, enemyLt, commanderOrder.order, context);
+      const lt = lieutenants.find(l => l.id === commanderOrder.lieutenantId);
+      if (lt) {
+        const context = buildOrderContext(session, lt);
+        const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
 
         if (ltResult.success && ltResult.output) {
-          const compiled = compileDirectives(ltResult.output, enemyLt.troopIds);
+          const compiled = compileDirectives(ltResult.output, lt.troopIds);
           applyFlowcharts(compiled, session.simulation!.runtimes);
         }
       }
     }
   }
 
-  // Notify the player that the enemy is preparing
+  // Notify the observer
+  const teamLabel = commander.team === 'enemy' ? 'Enemy' : 'Player AI';
   send(session.ws, {
     type: 'message',
     data: {
-      id: `msg_${Date.now()}_intel`,
+      id: `msg_${Date.now()}_intel_${commander.team}`,
       from: 'intel',
       to: 'commander',
-      content: 'Intelligence report: Enemy forces are organizing. Their commanders appear to be issuing orders.',
+      content: `Intelligence report: ${teamLabel} forces are organizing. Their commander is issuing orders.`,
       timestamp: Date.now(),
       tick: 0,
       type: 'alert',
@@ -659,25 +770,43 @@ async function briefEnemyLieutenants(session: GameSession) {
   });
 }
 
-// Run AI commander decision cycle during battle
-async function runAICommanderCycle(session: GameSession) {
-  if (!session.anthropicClient || !session.aiCommander || !session.simulation) return;
+// Run AI commander decision cycle during battle (works for either team)
+async function runAICommanderCycle(session: GameSession, commander: AICommander, lieutenants: Lieutenant[]) {
+  if (!session.anthropicClient || !session.simulation) return;
 
-  const result = await generateCommanderOrders(session.aiCommander, session.simulation, session.anthropicClient);
+  const result = await generateCommanderOrders(commander, session.simulation, session.anthropicClient);
 
   if (result.success && result.orders) {
     for (const commanderOrder of result.orders) {
-      const enemyLt = session.enemyLieutenants.find(lt => lt.id === commanderOrder.lieutenantId);
-      if (enemyLt && !enemyLt.busy) {
-        const context = buildOrderContext(session, enemyLt);
-        const ltResult = await processOrderWithModel(session, enemyLt, commanderOrder.order, context);
+      const lt = lieutenants.find(l => l.id === commanderOrder.lieutenantId);
+      if (lt && !lt.busy) {
+        const context = buildOrderContext(session, lt);
+        const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
 
         if (ltResult.success && ltResult.output) {
-          const compiled = compileDirectives(ltResult.output, enemyLt.troopIds);
+          const compiled = compileDirectives(ltResult.output, lt.troopIds);
           if (session.simulation) {
             applyFlowcharts(compiled, session.simulation.runtimes);
           }
         }
+      }
+    }
+
+    // In AI vs AI mode, relay player AI commander messages to the client
+    if (commander.team === 'player' && result.orders.length > 0) {
+      for (const commanderOrder of result.orders) {
+        send(session.ws, {
+          type: 'message',
+          data: {
+            id: `msg_${Date.now()}_ai_cmd_${commanderOrder.lieutenantId}`,
+            from: 'player_ai',
+            to: commanderOrder.lieutenantId,
+            content: commanderOrder.order,
+            timestamp: Date.now(),
+            tick: session.simulation?.battle.tick ?? 0,
+            type: 'order',
+          },
+        });
       }
     }
   }

@@ -10,6 +10,7 @@
     "dev": "npx tsx src/main.ts",
     "battle": "npx tsx src/main.ts basic",
     "assault": "npx tsx src/main.ts assault",
+    "demo": "npx tsx src/demo.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

@@ -9,7 +9,10 @@
     "start": "node dist/main.js",
     "dev": "npx tsx src/main.ts",
     "battle": "npx tsx src/main.ts basic",
-    "assault": "npx tsx src/main.ts assault"
+    "assault": "npx tsx src/main.ts assault",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "repository": {
     "type": "git",
@@ -23,9 +26,12 @@
   },
   "homepage": "https://github.com/Ishnoor-Singh/warchief#readme",
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "@types/node": "^25.3.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "zod": "^4.3.6"
   }
 }

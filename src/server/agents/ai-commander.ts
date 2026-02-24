@@ -11,6 +11,8 @@ export interface AICommanderConfig {
   personality: 'aggressive' | 'cautious' | 'balanced';
   lieutenantIds: string[];
   model: string;
+  team?: Team;
+  name?: string;
 }
 
 export interface CommanderOrder {
@@ -25,6 +27,8 @@ export interface AICommander {
   orderHistory: CommanderOrder[];
   busy: boolean;
   lastOrderTick: number;
+  team: Team;
+  name: string;
 }
 
 export interface CommanderResult {
@@ -58,40 +62,44 @@ export function createAICommander(config: AICommanderConfig): AICommander {
     orderHistory: [],
     busy: false,
     lastOrderTick: 0,
+    team: config.team || 'enemy',
+    name: config.name || 'Enemy Commander',
   };
 }
 
 export function buildCommanderContext(commander: AICommander, sim: SimulationState): string {
   const { battle } = sim;
+  const myTeam = commander.team;
+  const opponentTeam: Team = myTeam === 'player' ? 'enemy' : 'player';
 
   // Count troops per team
-  let enemyAlive = 0;
-  let enemyTotal = 0;
-  let playerAlive = 0;
-  let playerTotal = 0;
-  const enemyPositions: Array<{ id: string; x: number; y: number; health: number }> = [];
-  const playerVisible: Array<{ id: string; x: number; y: number; health: number }> = [];
+  let myAlive = 0;
+  let myTotal = 0;
+  let opponentAlive = 0;
+  let opponentTotal = 0;
+  const myPositions: Array<{ id: string; x: number; y: number; health: number }> = [];
+  const opponentVisible: Array<{ id: string; x: number; y: number; health: number }> = [];
 
   for (const agent of battle.agents.values()) {
     if (agent.type !== 'troop') continue;
 
-    if (agent.team === 'enemy') {
-      enemyTotal++;
+    if (agent.team === myTeam) {
+      myTotal++;
       if (agent.alive) {
-        enemyAlive++;
-        enemyPositions.push({ id: agent.id, x: Math.round(agent.position.x), y: Math.round(agent.position.y), health: agent.health });
+        myAlive++;
+        myPositions.push({ id: agent.id, x: Math.round(agent.position.x), y: Math.round(agent.position.y), health: agent.health });
       }
     } else {
-      playerTotal++;
+      opponentTotal++;
       if (agent.alive) {
-        playerAlive++;
-        // Only include player troops visible to enemy (within any enemy agent's visibility)
-        for (const enemyAgent of battle.agents.values()) {
-          if (enemyAgent.team !== 'enemy' || !enemyAgent.alive) continue;
-          const dx = agent.position.x - enemyAgent.position.x;
-          const dy = agent.position.y - enemyAgent.position.y;
-          if (Math.sqrt(dx * dx + dy * dy) <= enemyAgent.visibilityRadius) {
-            playerVisible.push({ id: agent.id, x: Math.round(agent.position.x), y: Math.round(agent.position.y), health: agent.health });
+        opponentAlive++;
+        // Only include opponent troops visible to our team (within any of our agents' visibility)
+        for (const myAgent of battle.agents.values()) {
+          if (myAgent.team !== myTeam || !myAgent.alive) continue;
+          const dx = agent.position.x - myAgent.position.x;
+          const dy = agent.position.y - myAgent.position.y;
+          if (Math.sqrt(dx * dx + dy * dy) <= myAgent.visibilityRadius) {
+            opponentVisible.push({ id: agent.id, x: Math.round(agent.position.x), y: Math.round(agent.position.y), health: agent.health });
             break;
           }
         }
@@ -101,8 +109,8 @@ export function buildCommanderContext(commander: AICommander, sim: SimulationSta
 
   const sections: string[] = [];
 
-  sections.push(`# You are the Enemy Commander
-You command the enemy army. Your goal is to defeat the player's forces.
+  sections.push(`# You are ${commander.name}
+You command the ${myTeam} army. Your goal is to defeat the ${opponentTeam}'s forces.
 Personality: ${commander.personality}
 ${PERSONALITY_STYLES[commander.personality]}
 
@@ -110,12 +118,12 @@ Battlefield: ${battle.width}x${battle.height}
 Current tick: ${battle.tick}`);
 
   sections.push(`# Your Forces
-Total troops: ${enemyTotal} (${enemyAlive} alive, ${enemyTotal - enemyAlive} dead)
-Positions: ${enemyPositions.slice(0, 10).map(p => `${p.id} at (${p.x},${p.y}) hp:${p.health}`).join('; ')}`);
+Total troops: ${myTotal} (${myAlive} alive, ${myTotal - myAlive} dead)
+Positions: ${myPositions.slice(0, 10).map(p => `${p.id} at (${p.x},${p.y}) hp:${p.health}`).join('; ')}`);
 
-  sections.push(`# Visible Enemy (Player) Forces
-Total visible: ${playerVisible.length} of ${playerAlive} alive
-Positions: ${playerVisible.slice(0, 10).map(p => `${p.id} at (${p.x},${p.y}) hp:${p.health}`).join('; ')}`);
+  sections.push(`# Visible Enemy Forces
+Total visible: ${opponentVisible.length} of ${opponentAlive} alive
+Positions: ${opponentVisible.slice(0, 10).map(p => `${p.id} at (${p.x},${p.y}) hp:${p.health}`).join('; ')}`);
 
   sections.push(`# Your Lieutenants
 ${commander.lieutenantIds.map(id => `- ${id}`).join('\n')}

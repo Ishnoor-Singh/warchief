@@ -6,7 +6,7 @@ import { PreBattleScreen } from './components/PreBattleScreen';
 import { SetupScreen } from './components/SetupScreen';
 import { EndScreen } from './components/EndScreen';
 import { useWebSocket } from './hooks/useWebSocket';
-import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary } from './types';
+import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode } from './types';
 import './App.css';
 
 type GamePhase = 'setup' | 'pre-battle' | 'battle' | 'post-battle';
@@ -50,10 +50,18 @@ function App() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
 
+  // Game mode state
+  const [gameMode, setGameMode] = useState<GameMode>('human_vs_ai');
+  const [playerPersonality, setPlayerPersonality] = useState<'aggressive' | 'cautious' | 'balanced'>('balanced');
+  const [enemyPersonality, setEnemyPersonality] = useState<'aggressive' | 'cautious' | 'balanced'>('balanced');
+
   // Ref to hold send function so handleWSMessage doesn't depend on it
   const sendRef = useRef<(message: unknown) => void>(() => {});
   // Track if we're waiting for battle_ready to auto-start
   const pendingBattleStart = useRef(false);
+  // Track game mode for use in callbacks
+  const gameModeRef = useRef<GameMode>(gameMode);
+  gameModeRef.current = gameMode;
 
   // Handle WebSocket messages
   const handleWSMessage = useCallback((msg: unknown) => {
@@ -61,9 +69,10 @@ function App() {
 
     switch (message.type) {
       case 'connected': {
-        const data = message.data as { models: Model[]; selectedModel: string };
+        const data = message.data as { models: Model[]; selectedModel: string; gameMode?: GameMode };
         setModels(data.models);
         setSelectedModel(data.selectedModel);
+        if (data.gameMode) setGameMode(data.gameMode);
         break;
       }
 
@@ -86,6 +95,12 @@ function App() {
       case 'model_set': {
         const data = message.data as { model: string };
         setSelectedModel(data.model);
+        break;
+      }
+
+      case 'game_mode_set': {
+        const data = message.data as { mode: GameMode };
+        setGameMode(data.mode);
         break;
       }
 
@@ -129,6 +144,8 @@ function App() {
       }
 
       case 'battle_started': {
+        const data = message.data as { gameMode?: GameMode };
+        if (data?.gameMode) setGameMode(data.gameMode);
         setPhase('battle');
         break;
       }
@@ -172,13 +189,27 @@ function App() {
     send({ type: 'set_model', data: { model } });
   }, [send]);
 
+  const handleGameModeChange = useCallback((mode: GameMode) => {
+    setGameMode(mode);
+    send({ type: 'set_game_mode', data: { mode } });
+  }, [send]);
+
   // Battle controls
   const handleStartBattle = useCallback(() => {
     setIsInitializing(true);
     pendingBattleStart.current = true;
-    send({ type: 'init_battle', data: { scenario: 'basic', briefings } });
+    send({
+      type: 'init_battle',
+      data: {
+        scenario: 'basic',
+        briefings,
+        gameMode: gameModeRef.current,
+        playerPersonality,
+        enemyPersonality,
+      },
+    });
     // start_battle will be sent automatically when battle_ready arrives
-  }, [send, briefings]);
+  }, [send, briefings, playerPersonality, enemyPersonality]);
 
   const handlePauseBattle = useCallback(() => {
     if (isPaused) {
@@ -211,6 +242,8 @@ function App() {
   // Connection status indicator
   const connectionStatus = status === 'connected' ? '🟢' : status === 'connecting' ? '🟡' : '🔴';
 
+  const isAiVsAi = gameMode === 'ai_vs_ai';
+
   return (
     <div className="app">
       <header className="app-header">
@@ -234,7 +267,9 @@ function App() {
             <span className="model-badge">{models.find(m => m.id === selectedModel)?.name || selectedModel}</span>
           )}
           {phase === 'battle' && (
-            <span className="vs-badge">vs LLM Commander</span>
+            <span className="vs-badge">
+              {isAiVsAi ? 'AI vs AI' : 'vs LLM Commander'}
+            </span>
           )}
         </div>
       </header>
@@ -260,6 +295,12 @@ function App() {
           onStartBattle={handleStartBattle}
           isInitializing={isInitializing}
           messages={messages}
+          gameMode={gameMode}
+          onGameModeChange={handleGameModeChange}
+          playerPersonality={playerPersonality}
+          enemyPersonality={enemyPersonality}
+          onPlayerPersonalityChange={setPlayerPersonality}
+          onEnemyPersonalityChange={setEnemyPersonality}
         />
       ) : phase === 'post-battle' ? (
         <EndScreen
@@ -296,6 +337,7 @@ function App() {
               lieutenants={lieutenants}
               selectedLieutenant={selectedLieutenant}
               onSendOrder={handleSendOrder}
+              isObserverMode={isAiVsAi}
             />
 
             <FlowchartPanel

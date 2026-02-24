@@ -146,7 +146,7 @@ function App() {
         setPhase('post-battle');
         break;
       }
-    }
+
       case 'battle_resumed': {
         setIsPaused(false);
         setBattleState(prev => ({ ...prev, running: true }));

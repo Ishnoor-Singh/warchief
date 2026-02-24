@@ -1,0 +1,31 @@
+{
+  "name": "warchief",
+  "version": "1.0.0",
+  "description": "You are the only human on the battlefield. Everyone else is an agent.",
+  "main": "dist/main.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "npx tsx src/main.ts",
+    "battle": "npx tsx src/main.ts basic",
+    "assault": "npx tsx src/main.ts assault"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ishnoor-Singh/warchief.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Ishnoor-Singh/warchief/issues"
+  },
+  "homepage": "https://github.com/Ishnoor-Singh/warchief#readme",
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

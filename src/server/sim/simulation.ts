@@ -421,3 +421,122 @@ export function getBattleSummary(state: SimulationState): string {
   
   return `Tick ${state.battle.tick} | Player: ${playerAlive}/${playerAlive + playerDead} | Enemy: ${enemyAlive}/${enemyAlive + enemyDead}`;
 }
+
+// Visibility zone for fog-of-war rendering
+export interface VisibilityZone {
+  position: Vec2;
+  radius: number;
+}
+
+// Filtered state for a specific team (fog of war)
+export interface FilteredBattleState {
+  tick: number;
+  agents: Array<{
+    id: string;
+    type: string;
+    team: Team;
+    position: Vec2;
+    health: number;
+    maxHealth: number;
+    morale: number;
+    currentAction: string | null;
+    formation: string;
+    alive: boolean;
+  }>;
+  visibilityZones: VisibilityZone[];
+  width: number;
+  height: number;
+  running: boolean;
+  winner: Team | null;
+}
+
+// Get battle state filtered by team visibility (fog of war)
+export function getFilteredStateForTeam(state: SimulationState, team: Team): FilteredBattleState {
+  const friendlyAgents: AgentState[] = [];
+  const visibilityZones: VisibilityZone[] = [];
+
+  // Collect friendly agents and their visibility zones
+  for (const agent of state.battle.agents.values()) {
+    if (agent.team === team && agent.alive) {
+      friendlyAgents.push(agent);
+      visibilityZones.push({
+        position: { ...agent.position },
+        radius: agent.visibilityRadius,
+      });
+    }
+  }
+
+  // Find enemy agents within any friendly agent's visibility
+  const visibleEnemies: AgentState[] = [];
+  for (const agent of state.battle.agents.values()) {
+    if (agent.team === team || !agent.alive) continue;
+
+    for (const friendly of friendlyAgents) {
+      const dist = distance(agent.position, friendly.position);
+      if (dist <= friendly.visibilityRadius) {
+        visibleEnemies.push(agent);
+        break;
+      }
+    }
+  }
+
+  // Combine all visible agents
+  const allVisible = [...Array.from(state.battle.agents.values()).filter(a => a.team === team), ...visibleEnemies];
+
+  return {
+    tick: state.battle.tick,
+    agents: allVisible.map(a => ({
+      id: a.id,
+      type: a.type,
+      team: a.team,
+      position: { ...a.position },
+      health: a.health,
+      maxHealth: a.maxHealth,
+      morale: a.morale,
+      currentAction: a.currentAction,
+      formation: a.formation,
+      alive: a.alive,
+    })),
+    visibilityZones,
+    width: state.battle.width,
+    height: state.battle.height,
+    running: state.battle.running,
+    winner: state.battle.winner,
+  };
+}
+
+// Detailed battle summary for end screen
+export interface DetailedBattleSummary {
+  tick: number;
+  durationSeconds: number;
+  winner: Team | null;
+  player: { alive: number; dead: number; total: number };
+  enemy: { alive: number; dead: number; total: number };
+}
+
+export function getDetailedBattleSummary(state: SimulationState): DetailedBattleSummary {
+  let playerAlive = 0;
+  let playerDead = 0;
+  let enemyAlive = 0;
+  let enemyDead = 0;
+
+  for (const agent of state.battle.agents.values()) {
+    if (agent.type !== 'troop') continue;
+
+    if (agent.team === 'player') {
+      if (agent.alive) playerAlive++;
+      else playerDead++;
+    } else {
+      if (agent.alive) enemyAlive++;
+      else enemyDead++;
+    }
+  }
+
+  return {
+    tick: state.battle.tick,
+    durationSeconds: state.battle.tick / 10,
+    winner: state.battle.winner,
+    player: { alive: playerAlive, dead: playerDead, total: playerAlive + playerDead },
+    enemy: { alive: enemyAlive, dead: enemyDead, total: enemyAlive + enemyDead },
+  };
+}

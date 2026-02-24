@@ -9,11 +9,11 @@ No polish. No menus. Proof of concept that the core mechanic is fun.
 
 ## MVP Scope
 
-- 1 player vs 1 AI-controlled enemy army
+- 1 player vs 1 LLM-controlled enemy commander
 - 1 fixed map (simple terrain, a ridge, some open ground)
 - Player has 3 lieutenants, ~30 troops each (~90 total)
-- Enemy has equivalent size, run by scripted AI (no LLM needed for enemy MVP)
-- Pre-battle phase: ~3 minutes to brief and configure
+- Enemy has 2 LLM lieutenants with equivalent troops, commanded by an AI commander
+- Pre-battle phase: ~3 minutes to brief and configure (enemy also briefs in parallel)
 - Battle phase: real-time, ~5-10 minutes
 - Win condition: enemy army reduced below 20% strength
 
@@ -57,39 +57,58 @@ No polish. No menus. Proof of concept that the core mechanic is fun.
 
 ---
 
-### Phase 3 — Minimal Frontend
+### Phase 3 — Minimal Frontend ✅
 *Make it playable.*
 
-- [ ] Top-down battlefield canvas (Phaser or plain Canvas)
-  - Render units as simple shapes (player = blue, enemy = red, lieutenants = larger)
-  - Render visibility fog
-  - Show formation shapes
-- [ ] Message panel
-  - Input box: "send to [lieutenant dropdown] / all"
-  - Message history feed
-  - Incoming reports from lieutenants
-- [ ] Flowchart panel (read-only for MVP)
+- [x] Top-down battlefield canvas (plain Canvas 2D)
+  - Render units as circles (player = blue, enemy = red, lieutenants = larger)
+  - Render visibility fog (radial gradient cutouts on dark overlay)
+  - Show formation shape indicators (wedge, circle, scatter, column, pincer)
+- [x] Message panel
+  - Input box to send orders to selected lieutenant
+  - Message history with timestamps, tick numbers, sender names
+  - Alert badges for urgent messages, intel reports for enemy activity
+- [x] Flowchart panel (read-only)
   - Select a lieutenant → see their active flowchart
-  - Current active node highlights live
-- [ ] Pre-battle screen
-  - Simple text area to brief each lieutenant
-  - Toggle peer-to-peer communication links
-  - "Begin Battle" button
+  - Current active node highlights with green border and "ACTIVE" badge
+  - Shows priority, conditions, and action parameters
+- [x] Pre-battle screen
+  - Text area to brief each lieutenant
+  - Lieutenant stats displayed (initiative, discipline, communication bars)
+  - Enemy LLM commander briefing shown as intel alert
 
-**Exit criteria:** A human can sit down and play a full battle from pre-battle briefing to win/loss.
+**Exit criteria:** A human can play a full battle from briefing to win/loss. ✅
 
 ---
 
-### Phase 4 — MVP Playability Pass
+### Phase 4 — MVP Playability Pass ✅
 *Make it not confusing.*
 
-- [ ] Lieutenant names and personality displayed
-- [ ] Report feed is readable (timestamps, sender, importance)
-- [ ] Flowchart fallback behavior is clear (what happens when a node has no match)
-- [ ] Win/loss screen with simple summary (who held, who broke, key moments)
-- [ ] At least 2 enemy AI behaviors (aggressive rusher, defensive holder) to test against
+- [x] Lieutenant names, personality, and stats displayed with visual stat bars
+- [x] Report feed is readable (timestamps, sender names, tick numbers, alert badges)
+- [x] Flowchart fallback behavior visible (default hold action compiled for all flowcharts)
+- [x] Win/loss screen with detailed summary (per-team casualties, duration, key moments)
+- [x] LLM opponent commander (AI commander + 2 enemy lieutenants replace scripted behavior)
 
-**Exit criteria:** Someone who hasn't seen the game can play it with minimal explanation.
+**Exit criteria:** Someone who hasn't seen the game can play it with minimal explanation. ✅
+
+---
+
+### Phase 5 — LLM Opponent ✅
+*Play against an intelligent enemy.*
+
+- [x] AI Commander module (`src/server/agents/ai-commander.ts`)
+  - Balanced personality, generates strategic orders for enemy lieutenants
+  - Receives battlefield state from enemy perspective (fog of war applies to enemy too)
+  - Issues orders every 50 ticks during battle
+- [x] Enemy lieutenants (Lt. Volkov - aggressive, Lt. Kira - cautious)
+  - Same LLM pipeline as player lieutenants
+  - Compile flowcharts for enemy troops
+- [x] Pre-battle briefing for enemy army (runs in parallel with player briefing)
+- [x] Visibility-filtered state (`getFilteredStateForTeam`) — fog of war is real, not cosmetic
+- [x] 78 tests passing (TDD: red → green → refactor)
+
+**Exit criteria:** Player faces an LLM opponent that adapts its strategy during battle. ✅
 
 ---
 
@@ -119,9 +138,10 @@ That's the MVP.
 ## Not In MVP
 
 - Player-editable flowcharts (lieutenants write them, player reads them)
-- Enemy LLM commander
+- ~~Enemy LLM commander~~ (DONE - Phase 5)
 - Morale speeches affecting stats
 - Multiple maps
 - Saving / replaying battles
 - More than 3 lieutenants
 - Peer-to-peer lieutenant LLM communication (can be mocked with scripted responses)
+- Courage/morale probability checks (stats exist, not wired to behavior yet)

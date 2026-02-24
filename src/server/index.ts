@@ -8,11 +8,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
 
-import { createSimulation, startSimulation, stopSimulation, getBattleSummary, SimulationState, simulationTick } from './sim/simulation.js';
+import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, SimulationState } from './sim/simulation.js';
 import { createBasicScenario, createAssaultScenario } from './sim/scenario.js';
 import { createLieutenant, processOrder, Lieutenant, LLMClient, OrderContext } from './agents/lieutenant.js';
 import { VisibleUnitInfo } from './agents/input-builder.js';
 import { compileDirectives, applyFlowcharts } from './agents/compiler.js';
+import { createAICommander, generateCommanderOrders, AICommander } from './agents/ai-commander.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,9 +25,12 @@ interface GameSession {
   apiKey: string | null;
   model: string;
   simulation: SimulationState | null;
-  lieutenants: Lieutenant[];
+  lieutenants: Lieutenant[];             // Player's lieutenants
+  enemyLieutenants: Lieutenant[];        // Enemy LLM lieutenants
+  aiCommander: AICommander | null;       // Enemy AI commander
   timer: NodeJS.Timeout | null;
   anthropicClient: LLMClient | null;
+  aiCommanderInterval: number;           // How often AI commander acts (in ticks)
 }
 
 const sessions = new Map<WebSocket, GameSession>();
@@ -37,6 +41,9 @@ const AVAILABLE_MODELS = [
   { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
   { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (faster)' },
 ];
+
+// AI Commander order interval (every N ticks)
+const AI_COMMANDER_INTERVAL = 50; // Every 5 seconds
 
 // Create Express app
 const app = express();
@@ -64,19 +71,22 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 wss.on('connection', (ws) => {
   console.log('Client connected');
-  
+
   const session: GameSession = {
     ws,
     apiKey: null,
     model: AVAILABLE_MODELS.find(m => m.default)?.id || AVAILABLE_MODELS[0]!.id,
     simulation: null,
     lieutenants: [],
+    enemyLieutenants: [],
+    aiCommander: null,
     timer: null,
     anthropicClient: null,
+    aiCommanderInterval: AI_COMMANDER_INTERVAL,
   };
-  
+
   sessions.set(ws, session);
-  
+
   // Send initial state
   send(ws, {
     type: 'connected',
@@ -86,7 +96,7 @@ wss.on('connection', (ws) => {
       needsApiKey: true,
     },
   });
-  
+
   ws.on('message', async (data) => {
     try {
       const message = JSON.parse(data.toString());
@@ -96,7 +106,7 @@ wss.on('connection', (ws) => {
       send(ws, { type: 'error', data: { message: (err as Error).message } });
     }
   });
-  
+
   ws.on('close', () => {
     console.log('Client disconnected');
     if (session.timer) {
@@ -114,17 +124,17 @@ function send(ws: WebSocket, message: unknown) {
 
 async function handleMessage(session: GameSession, message: { type: string; data?: unknown }) {
   const { ws } = session;
-  
+
   switch (message.type) {
     case 'set_api_key': {
       const { apiKey } = message.data as { apiKey: string };
-      
+
       // Validate API key format (basic check)
       if (!apiKey || !apiKey.startsWith('sk-')) {
         send(ws, { type: 'error', data: { message: 'Invalid API key format' } });
         return;
       }
-      
+
       // Test the API key with a minimal call
       try {
         const client = new Anthropic({ apiKey });
@@ -133,17 +143,17 @@ async function handleMessage(session: GameSession, message: { type: string; data
           max_tokens: 10,
           messages: [{ role: 'user', content: 'Hi' }],
         });
-        
+
         session.apiKey = apiKey;
         session.anthropicClient = client as unknown as LLMClient;
-        
+
         send(ws, { type: 'api_key_valid', data: { valid: true } });
       } catch (err) {
         send(ws, { type: 'error', data: { message: 'Invalid API key: ' + (err as Error).message } });
       }
       break;
     }
-    
+
     case 'set_model': {
       const { model } = message.data as { model: string };
       if (AVAILABLE_MODELS.find(m => m.id === model)) {
@@ -152,16 +162,16 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
       break;
     }
-    
+
     case 'init_battle': {
-      const { scenario, briefings } = message.data as { 
+      const { scenario, briefings } = message.data as {
         scenario: 'basic' | 'assault';
         briefings: Record<string, string>;
       };
-      
+
       // Create scenario
       const scenarioData = scenario === 'assault' ? createAssaultScenario() : createBasicScenario();
-      
+
       // Create simulation
       session.simulation = createSimulation(
         scenarioData.width,
@@ -169,8 +179,8 @@ async function handleMessage(session: GameSession, message: { type: string; data
         scenarioData.agents,
         scenarioData.flowcharts
       );
-      
-      // Create lieutenants
+
+      // Create player lieutenants
       session.lieutenants = [
         createLieutenant({
           id: 'lt_alpha',
@@ -197,62 +207,110 @@ async function handleMessage(session: GameSession, message: { type: string; data
           authorizedPeers: ['lt_bravo'],
         }),
       ];
-      
-      // Process initial briefings if API key is set
+
+      // Create enemy lieutenants (LLM-powered)
+      session.enemyLieutenants = [
+        createLieutenant({
+          id: 'lt_enemy_1',
+          name: 'Lt. Volkov',
+          personality: 'aggressive',
+          stats: { initiative: 7, discipline: 6, communication: 5 },
+          troopIds: Array.from(session.simulation.battle.agents.keys()).filter(id => id.startsWith('e_s1') || id.startsWith('e_s2')),
+          authorizedPeers: ['lt_enemy_2'],
+        }),
+        createLieutenant({
+          id: 'lt_enemy_2',
+          name: 'Lt. Kira',
+          personality: 'cautious',
+          stats: { initiative: 5, discipline: 8, communication: 7 },
+          troopIds: Array.from(session.simulation.battle.agents.keys()).filter(id => id.startsWith('e_s3')),
+          authorizedPeers: ['lt_enemy_1'],
+        }),
+      ];
+
+      // Create AI commander
+      session.aiCommander = createAICommander({
+        personality: 'balanced',
+        lieutenantIds: session.enemyLieutenants.map(lt => lt.id),
+        model: session.model,
+      });
+
+      // Process initial briefings for player lieutenants
       if (session.apiKey && session.anthropicClient) {
+        const briefingPromises: Promise<void>[] = [];
+
         for (const lt of session.lieutenants) {
           const briefing = briefings[lt.id];
           if (briefing) {
-            await processInitialBriefing(session, lt, briefing);
+            briefingPromises.push(processInitialBriefing(session, lt, briefing));
           }
         }
+
+        // Brief enemy lieutenants via AI commander
+        briefingPromises.push(briefEnemyLieutenants(session));
+
+        await Promise.all(briefingPromises);
       }
-      
-      // Send initial state
+
+      // Send initial state (visibility-filtered)
       sendBattleState(session);
       sendLieutenants(session);
-      
+
       send(ws, { type: 'battle_ready', data: {} });
       break;
     }
-    
+
     case 'start_battle': {
       if (!session.simulation) {
         send(ws, { type: 'error', data: { message: 'No battle initialized' } });
         return;
       }
-      
+
       session.simulation.battle.running = true;
-      
+
       // Start simulation loop
       session.timer = setInterval(() => {
         if (session.simulation && session.simulation.battle.running) {
           // Run simulation tick
           simulationTick(session.simulation);
-          
-          // Send state every 5 ticks
+
+          // Send state every 5 ticks (visibility-filtered)
           if (session.simulation.battle.tick % 5 === 0) {
             sendBattleState(session);
           }
-          
+
+          // AI Commander decision cycle (non-blocking)
+          if (
+            session.aiCommander &&
+            !session.aiCommander.busy &&
+            session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
+            session.simulation.battle.tick > 0
+          ) {
+            runAICommanderCycle(session).catch(err => {
+              console.error('AI Commander error:', err);
+            });
+          }
+
           // Check for battle end
           if (session.simulation.battle.winner) {
             if (session.timer) clearInterval(session.timer);
-            send(ws, { 
-              type: 'battle_end', 
-              data: { 
-                winner: session.simulation.battle.winner,
-                summary: getBattleSummary(session.simulation),
-              } 
+
+            const summary = getDetailedBattleSummary(session.simulation);
+            send(ws, {
+              type: 'battle_end',
+              data: {
+                winner: summary.winner,
+                summary,
+              },
             });
           }
         }
       }, 100);
-      
+
       send(ws, { type: 'battle_started', data: {} });
       break;
     }
-    
+
     case 'pause_battle': {
       if (session.simulation) {
         session.simulation.battle.running = false;
@@ -264,25 +322,25 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
       break;
     }
-    
+
     case 'send_order': {
       const { lieutenantId, order } = message.data as { lieutenantId: string; order: string };
-      
+
       if (!session.apiKey || !session.anthropicClient) {
         send(ws, { type: 'error', data: { message: 'API key not set' } });
         return;
       }
-      
+
       const lieutenant = session.lieutenants.find(lt => lt.id === lieutenantId);
       if (!lieutenant) {
         send(ws, { type: 'error', data: { message: 'Lieutenant not found' } });
         return;
       }
-      
+
       // Mark as busy
       lieutenant.busy = true;
       sendLieutenants(session);
-      
+
       // Send order message
       send(ws, {
         type: 'message',
@@ -292,17 +350,18 @@ async function handleMessage(session: GameSession, message: { type: string; data
           to: lieutenantId,
           content: order,
           timestamp: Date.now(),
+          tick: session.simulation?.battle.tick ?? 0,
           type: 'order',
         },
       });
-      
+
       // Process order
       try {
         const context = buildOrderContext(session, lieutenant);
         const result = await processOrderWithModel(session, lieutenant, order, context);
-        
+
         lieutenant.busy = false;
-        
+
         if (result.success && result.output) {
           // Send response
           send(ws, {
@@ -313,16 +372,17 @@ async function handleMessage(session: GameSession, message: { type: string; data
               to: 'commander',
               content: result.output.message_up || 'Understood.',
               timestamp: Date.now(),
+              tick: session.simulation?.battle.tick ?? 0,
               type: 'report',
             },
           });
-          
+
           // Compile and apply flowcharts
           const compiled = compileDirectives(result.output, lieutenant.troopIds);
           if (session.simulation) {
             applyFlowcharts(compiled, session.simulation.runtimes);
           }
-          
+
           // Send updated flowchart
           send(ws, {
             type: 'flowchart',
@@ -340,6 +400,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
               to: 'commander',
               content: `Error processing order: ${result.error}`,
               timestamp: Date.now(),
+              tick: session.simulation?.battle.tick ?? 0,
               type: 'alert',
             },
           });
@@ -354,42 +415,35 @@ async function handleMessage(session: GameSession, message: { type: string; data
             to: 'commander',
             content: `Error: ${(err as Error).message}`,
             timestamp: Date.now(),
+            tick: session.simulation?.battle.tick ?? 0,
             type: 'alert',
           },
         });
       }
-      
+
       sendLieutenants(session);
       break;
     }
   }
 }
 
+// Send visibility-filtered battle state to the player
 function sendBattleState(session: GameSession) {
   if (!session.simulation) return;
-  
-  const { battle } = session.simulation;
-  
+
+  const filtered = getFilteredStateForTeam(session.simulation, 'player');
+
+  // Also include currentNodeId from runtimes for flowchart highlighting
+  const activeNodes: Record<string, string | null> = {};
+  for (const [agentId, runtime] of session.simulation.runtimes) {
+    activeNodes[agentId] = runtime.currentNodeId;
+  }
+
   send(session.ws, {
     type: 'state',
     data: {
-      tick: battle.tick,
-      agents: Array.from(battle.agents.values()).map(a => ({
-        id: a.id,
-        type: a.type,
-        team: a.team,
-        position: a.position,
-        health: a.health,
-        maxHealth: a.maxHealth,
-        morale: a.morale,
-        currentAction: a.currentAction,
-        formation: a.formation,
-        alive: a.alive,
-      })),
-      width: battle.width,
-      height: battle.height,
-      running: battle.running,
-      winner: battle.winner,
+      ...filtered,
+      activeNodes,
     },
   });
 }
@@ -404,6 +458,7 @@ function sendLieutenants(session: GameSession) {
         personality: lt.personality,
         troopIds: lt.troopIds,
         busy: lt.busy,
+        stats: lt.stats,
       })),
     },
   });
@@ -419,7 +474,7 @@ function buildOrderContext(session: GameSession, lieutenant: Lieutenant): OrderC
       health: a.health,
       morale: a.morale,
     }));
-  
+
   return {
     currentOrders: '',
     visibleUnits,
@@ -429,9 +484,31 @@ function buildOrderContext(session: GameSession, lieutenant: Lieutenant): OrderC
 
 async function processInitialBriefing(session: GameSession, lieutenant: Lieutenant, briefing: string) {
   if (!session.anthropicClient) return;
-  
+
   const context = buildOrderContext(session, lieutenant);
-  await processOrderWithModel(session, lieutenant, briefing, context);
+  const result = await processOrderWithModel(session, lieutenant, briefing, context);
+
+  if (result.success && result.output) {
+    // Apply the compiled flowcharts
+    const compiled = compileDirectives(result.output, lieutenant.troopIds);
+    if (session.simulation) {
+      applyFlowcharts(compiled, session.simulation.runtimes);
+    }
+
+    // Send lieutenant's response as a message
+    send(session.ws, {
+      type: 'message',
+      data: {
+        id: `msg_${Date.now()}_${lieutenant.id}`,
+        from: lieutenant.id,
+        to: 'commander',
+        content: result.output.message_up || 'Understood, commander.',
+        timestamp: Date.now(),
+        tick: 0,
+        type: 'report',
+      },
+    });
+  }
 }
 
 async function processOrderWithModel(
@@ -440,17 +517,77 @@ async function processOrderWithModel(
   order: string,
   context: OrderContext
 ) {
-  // Create a client with the user's API key and selected model
   const client = session.anthropicClient;
   if (!client) throw new Error('No API client');
-  
+
   // Override the model in the processOrder call
   const originalCreate = client.messages.create.bind(client.messages);
   client.messages.create = async (params: Parameters<typeof originalCreate>[0]) => {
     return originalCreate({ ...params, model: session.model });
   };
-  
+
   return processOrder(lieutenant, order, context, client);
+}
+
+// Brief enemy lieutenants through the AI commander
+async function briefEnemyLieutenants(session: GameSession) {
+  if (!session.anthropicClient || !session.aiCommander || !session.simulation) return;
+
+  // Generate initial orders from AI commander
+  const result = await generateCommanderOrders(session.aiCommander, session.simulation, session.anthropicClient);
+
+  if (result.success && result.orders) {
+    for (const commanderOrder of result.orders) {
+      const enemyLt = session.enemyLieutenants.find(lt => lt.id === commanderOrder.lieutenantId);
+      if (enemyLt) {
+        const context = buildOrderContext(session, enemyLt);
+        const ltResult = await processOrderWithModel(session, enemyLt, commanderOrder.order, context);
+
+        if (ltResult.success && ltResult.output) {
+          const compiled = compileDirectives(ltResult.output, enemyLt.troopIds);
+          applyFlowcharts(compiled, session.simulation!.runtimes);
+        }
+      }
+    }
+  }
+
+  // Notify the player that the enemy is preparing
+  send(session.ws, {
+    type: 'message',
+    data: {
+      id: `msg_${Date.now()}_intel`,
+      from: 'intel',
+      to: 'commander',
+      content: 'Intelligence report: Enemy forces are organizing. Their commanders appear to be issuing orders.',
+      timestamp: Date.now(),
+      tick: 0,
+      type: 'alert',
+    },
+  });
+}
+
+// Run AI commander decision cycle during battle
+async function runAICommanderCycle(session: GameSession) {
+  if (!session.anthropicClient || !session.aiCommander || !session.simulation) return;
+
+  const result = await generateCommanderOrders(session.aiCommander, session.simulation, session.anthropicClient);
+
+  if (result.success && result.orders) {
+    for (const commanderOrder of result.orders) {
+      const enemyLt = session.enemyLieutenants.find(lt => lt.id === commanderOrder.lieutenantId);
+      if (enemyLt && !enemyLt.busy) {
+        const context = buildOrderContext(session, enemyLt);
+        const ltResult = await processOrderWithModel(session, enemyLt, commanderOrder.order, context);
+
+        if (ltResult.success && ltResult.output) {
+          const compiled = compileDirectives(ltResult.output, enemyLt.troopIds);
+          if (session.simulation) {
+            applyFlowcharts(compiled, session.simulation.runtimes);
+          }
+        }
+      }
+    }
+  }
 }
 
 // Fallback to serving index.html for SPA routing
@@ -463,9 +600,10 @@ server.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║   ⚔️  WARCHIEF SERVER                                         ║
+║   WARCHIEF SERVER                                             ║
 ║                                                               ║
 ║   http://localhost:${PORT}                                      ║
+║   LLM Opponent: ENABLED                                       ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);

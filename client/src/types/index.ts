@@ -1,4 +1,4 @@
-// Shared types between client and server (duplicated for now, will share later)
+// Shared types between client and server
 
 export interface Vec2 {
   x: number;
@@ -21,6 +21,11 @@ export interface AgentState {
   alive: boolean;
 }
 
+export interface VisibilityZone {
+  position: Vec2;
+  radius: number;
+}
+
 export interface BattleState {
   tick: number;
   agents: AgentState[];
@@ -28,6 +33,14 @@ export interface BattleState {
   height: number;
   running: boolean;
   winner: Team | null;
+  visibilityZones?: VisibilityZone[];
+  activeNodes?: Record<string, string | null>;
+}
+
+export interface LieutenantStats {
+  initiative: number;
+  discipline: number;
+  communication: number;
 }
 
 export interface Lieutenant {
@@ -36,6 +49,7 @@ export interface Lieutenant {
   personality: 'aggressive' | 'cautious' | 'disciplined' | 'impulsive';
   troopIds: string[];
   busy: boolean;
+  stats?: LieutenantStats;
 }
 
 export interface Model {
@@ -50,6 +64,7 @@ export interface Message {
   to: string;
   content: string;
   timestamp: number;
+  tick?: number;
   type: 'order' | 'report' | 'alert';
 }
 
@@ -66,14 +81,10 @@ export interface Flowchart {
   nodes: FlowchartNode[];
 }
 
-// WebSocket message types
-export type WSMessage = 
-  | { type: 'state'; data: BattleState }
-  | { type: 'message'; data: Message }
-  | { type: 'flowchart'; data: { lieutenantId: string; flowcharts: Record<string, Flowchart> } }
-  | { type: 'connected'; data: { lieutenants: Lieutenant[] } };
-
-export type WSCommand =
-  | { type: 'order'; lieutenantId: string; order: string }
-  | { type: 'start_battle' }
-  | { type: 'pause_battle' };
+export interface DetailedBattleSummary {
+  tick: number;
+  durationSeconds: number;
+  winner: Team | null;
+  player: { alive: number; dead: number; total: number };
+  enemy: { alive: number; dead: number; total: number };
+}

@@ -21,35 +21,39 @@ No polish. No menus. Proof of concept that the core mechanic is fun.
 
 ## Phases
 
-### Phase 1 — Simulation Core
+### Phase 1 — Simulation Core ✅
 *Get a battle running without any LLM or UI.*
 
-- [ ] 2D grid or continuous coordinate sim (recommend continuous, simple)
-- [ ] Agent state: position, health, morale, current action
-- [ ] Basic combat resolution (distance-based, stat-weighted)
-- [ ] Flowchart runtime: event system, node execution, action handlers
-- [ ] Visibility per agent (radius-based)
-- [ ] Sim loop at 10 ticks/sec
-- [ ] Hardcode a simple scenario: two armies, troops with basic `engage on sight` flowcharts
-- [ ] Verify battle resolves correctly
+- [x] 2D grid or continuous coordinate sim (continuous)
+- [x] Agent state: position, health, morale, current action
+- [x] Basic combat resolution (distance-based, stat-weighted)
+- [x] Flowchart runtime: event system, node execution, action handlers
+- [x] Visibility per agent (radius-based)
+- [x] Sim loop at 10 ticks/sec
+- [x] Hardcode a simple scenario: two armies, troops with basic `engage on sight` flowcharts
+- [x] Verify battle resolves correctly
 
-**Exit criteria:** A battle runs to completion in the terminal with no UI.
+**Exit criteria:** A battle runs to completion in the terminal with no UI. ✅
+
+**Run:** `npm run battle` or `npm run assault`
 
 ---
 
-### Phase 2 — Lieutenant LLM Layer
+### Phase 2 — Lieutenant LLM Layer ✅
 *Wire in Claude as lieutenant brains.*
 
-- [ ] Lieutenant system prompt template
-- [ ] Input builder: assembles system prompt from current state
-- [ ] Output parser + validator: parses `LieutenantOutput` JSON, validates schema
-- [ ] Flowchart compiler: converts validated JSON into running runtime nodes
-- [ ] Async LLM call queue: non-blocking, integrates with sim loop
-- [ ] Basic message routing: player text → lieutenant LLM → compiled flowchart
-- [ ] Retry logic for malformed output (pass error back to LLM, try once more)
-- [ ] Test: send "take the high ground" to a lieutenant, verify troops move accordingly
+- [x] Lieutenant system prompt template
+- [x] Input builder: assembles system prompt from current state
+- [x] Output parser + validator: parses `LieutenantOutput` JSON, validates schema (Zod)
+- [x] Flowchart compiler: converts validated JSON into running runtime nodes
+- [x] Async LLM call queue: non-blocking, integrates with sim loop
+- [x] Basic message routing: player text → lieutenant LLM → compiled flowchart
+- [x] Retry logic for malformed output (pass error back to LLM, try once more)
+- [x] Test: 56 tests passing (TDD: red → green)
 
-**Exit criteria:** Player can type a message, lieutenant interprets it, troops change behavior.
+**Exit criteria:** Player can type a message, lieutenant interprets it, troops change behavior. ✅
+
+**Run demo:** `ANTHROPIC_API_KEY=sk-... npm run demo`
 
 ---
 

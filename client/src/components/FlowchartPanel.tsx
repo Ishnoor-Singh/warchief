@@ -1,4 +1,19 @@
-import type { Flowchart } from '../types';
+import type { Flowchart, FlowchartNode } from '../types';
+
+function renderActionParams(action: FlowchartNode['action']): React.ReactNode {
+  if (action.type === 'moveTo' && action.position) {
+    const pos = action.position as { x: number; y: number };
+    return <span className="action-params">({pos.x}, {pos.y})</span>;
+  }
+  if (action.type === 'setFormation' && action.formation) {
+    return <span className="action-params">{String(action.formation)}</span>;
+  }
+  if (action.type === 'fallback' && action.position) {
+    const pos = action.position as { x: number; y: number };
+    return <span className="action-params">to ({pos.x}, {pos.y})</span>;
+  }
+  return null;
+}
 
 interface Props {
   flowchart: Flowchart | undefined;
@@ -7,7 +22,7 @@ interface Props {
   selectedLieutenant?: string | null;
 }
 
-export function FlowchartPanel({ flowchart, lieutenantName, activeNodes, selectedLieutenant }: Props) {
+export function FlowchartPanel({ flowchart, lieutenantName, activeNodes, selectedLieutenant: _selectedLieutenant }: Props) {
   // Determine which node ids are currently active for this lieutenant's troops
   const activeNodeIds = new Set<string>();
   if (activeNodes && flowchart) {
@@ -52,16 +67,9 @@ export function FlowchartPanel({ flowchart, lieutenantName, activeNodes, selecte
                     <div className="condition">if {node.condition}</div>
                   )}
                   <div className="action-row">
-                    <span className="arrow">-&gt; </span>
+                    <span className="arrow">→ </span>
                     <span className="action">{node.action.type}</span>
-                    {node.action.type === 'moveTo' && node.action.position && (
-                      <span className="action-params">
-                        ({(node.action.position as {x: number; y: number}).x}, {(node.action.position as {x: number; y: number}).y})
-                      </span>
-                    )}
-                    {node.action.type === 'setFormation' && node.action.formation && (
-                      <span className="action-params">{String(node.action.formation)}</span>
-                    )}
+                    {renderActionParams(node.action)}
                   </div>
                 </div>
               );

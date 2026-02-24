@@ -534,38 +534,368 @@ body {
   font-size: 10px;
 }
 
-/* Victory Overlay */
-.victory-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.8);
+.vs-badge {
+  padding: 4px 10px;
+  background: rgba(255, 74, 74, 0.2);
+  border: 1px solid rgba(255, 74, 74, 0.3);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--enemy);
+  font-weight: 600;
+}
+
+/* Message header with timestamp */
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.message-from {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.message-time {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.message-tick {
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.message-badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.alert-badge {
+  background: rgba(255, 74, 74, 0.2);
+  color: var(--enemy);
+}
+
+/* Flowchart active node */
+.flowchart-node.active {
+  border-left-color: var(--success);
+  background: rgba(74, 255, 106, 0.08);
+}
+
+.flowchart-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.flowchart-node .priority {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.flowchart-node .active-indicator {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(74, 255, 106, 0.2);
+  color: var(--success);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.flowchart-node .condition {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-bottom: 2px;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-row .arrow {
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.action-params {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  margin-left: 4px;
+}
+
+/* Pre-battle stat bars */
+.lt-stats {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stat-bar .stat-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  width: 60px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-track {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.stat-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.stat-fill.discipline {
+  background: #6b6bff;
+}
+
+.stat-fill.comms {
+  background: #6bff6b;
+}
+
+.stat-bar .stat-value {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text);
+  width: 16px;
+  text-align: right;
+}
+
+.start-battle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Briefing responses */
+.briefing-responses {
+  max-width: 800px;
+  width: 100%;
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.briefing-msg {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.briefing-msg.report {
+  background: rgba(74, 255, 106, 0.08);
+  border-left: 3px solid var(--success);
+}
+
+.briefing-msg.alert {
+  background: rgba(255, 170, 74, 0.08);
+  border-left: 3px solid var(--warning);
+}
+
+/* End Screen */
+.end-screen {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
-}
-
-.victory-content {
-  text-align: center;
   padding: 48px;
-  background: var(--bg-panel);
-  border-radius: 16px;
+  background: linear-gradient(180deg, #0a0a0f 0%, #12121a 100%);
 }
 
-.victory-content h2 {
-  font-size: 48px;
-  margin-bottom: 16px;
+.end-content {
+  max-width: 600px;
+  width: 100%;
+  text-align: center;
 }
 
-.victory-content button {
-  margin-top: 24px;
-  padding: 12px 32px;
+.end-title {
+  font-size: 64px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  margin-bottom: 12px;
+}
+
+.end-title.victory {
+  color: var(--success);
+  text-shadow: 0 0 40px rgba(74, 255, 106, 0.3);
+}
+
+.end-title.defeat {
+  color: var(--enemy);
+  text-shadow: 0 0 40px rgba(255, 74, 74, 0.3);
+}
+
+.end-subtitle {
+  color: var(--text-dim);
   font-size: 16px;
+  margin-bottom: 40px;
+}
+
+.end-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.end-stat-group {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: left;
+}
+
+.end-stat-group h3 {
+  font-size: 14px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+
+.end-stat {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.end-stat .stat-label {
+  color: var(--text-dim);
+}
+
+.end-stat .stat-value.player {
+  color: var(--player);
+  font-weight: 600;
+}
+
+.end-stat .stat-value.enemy {
+  color: var(--enemy);
+  font-weight: 600;
+}
+
+.end-stat-bar {
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.end-stat-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s;
+}
+
+.end-stat-fill.player {
+  background: var(--player);
+}
+
+.end-stat-fill.enemy {
+  background: var(--enemy);
+}
+
+.end-duration {
+  color: var(--text-dim);
+  font-size: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  text-align: center;
+}
+
+.end-moments {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 32px;
+  text-align: left;
+}
+
+.end-moments h3 {
+  font-size: 14px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+
+.end-moment {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.end-moment.report {
+  background: rgba(74, 255, 106, 0.05);
+  border-left: 2px solid var(--success);
+}
+
+.end-moment.alert {
+  background: rgba(255, 74, 74, 0.05);
+  border-left: 2px solid var(--enemy);
+}
+
+.moment-from {
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-right: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.end-new-battle {
+  padding: 16px 48px;
+  font-size: 18px;
+  font-weight: 700;
   background: var(--accent);
   border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   color: white;
   cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.end-new-battle:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(74, 158, 255, 0.3);
 }
 
 /* Scrollbar */

@@ -1,8 +1,8 @@
 // Flowchart runtime - executes the logic that lieutenants compile for troops
 // Troops are flowchart agents: fast, deterministic, dumb
 
-import { GameEvent, GameAction, EventType } from '../../shared/events';
-import { Vec2 } from '../../shared/types';
+import { GameEvent, GameAction, EventType } from '../../shared/events/index.js';
+import { Vec2 } from '../../shared/types/index.js';
 
 // A node in the flowchart - the basic unit of logic
 export interface FlowchartNode {

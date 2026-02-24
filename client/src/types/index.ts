@@ -38,6 +38,12 @@ export interface Lieutenant {
   busy: boolean;
 }
 
+export interface Model {
+  id: string;
+  name: string;
+  default?: boolean;
+}
+
 export interface Message {
   id: string;
   from: string;

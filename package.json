@@ -5,9 +5,12 @@
   "main": "dist/main.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/main.js",
-    "dev": "npx tsx src/main.ts",
+    "build": "npm run build:client && npm run build:server",
+    "build:server": "tsc",
+    "build:client": "cd client && npm run build",
+    "start": "node dist/server/index.js",
+    "dev": "npx tsx src/server/index.ts",
+    "dev:client": "cd client && npm run dev",
     "battle": "npx tsx src/main.ts basic",
     "assault": "npx tsx src/main.ts assault",
     "demo": "npx tsx src/demo.ts",
@@ -27,12 +30,18 @@
   },
   "homepage": "https://github.com/Ishnoor-Singh/warchief#readme",
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@types/express": "^5.0.6",
     "@types/node": "^25.3.0",
+    "@types/ws": "^8.18.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "express": "^5.2.1",
+    "ws": "^8.19.0",
     "zod": "^4.3.6"
   }
 }

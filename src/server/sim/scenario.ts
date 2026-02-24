@@ -1,7 +1,7 @@
 // Test scenario: Two armies with basic engage-on-sight flowcharts
 
-import { AgentState, TroopAgent, Vec2, Team, TroopStats } from '../../shared/types';
-import { Flowchart, createEngageOnSightFlowchart, createHoldPositionFlowchart } from '../runtime/flowchart';
+import { AgentState, TroopAgent, Vec2, Team, TroopStats } from '../../shared/types/index.js';
+import { Flowchart, createEngageOnSightFlowchart, createHoldPositionFlowchart } from '../runtime/flowchart.js';
 
 // Create a troop agent
 function createTroop(

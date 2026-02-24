@@ -10,20 +10,20 @@ import {
   CombatResult,
   VisibleEnemy,
   TroopStats
-} from '../../shared/types';
+} from '../../shared/types/index.js';
 import { 
   GameEvent, 
   GameAction,
   EnemySpottedEvent,
   UnderAttackEvent 
-} from '../../shared/events';
+} from '../../shared/events/index.js';
 import { 
   FlowchartRuntime, 
   Flowchart, 
   createFlowchartRuntime, 
   queueEvent, 
   processEvents 
-} from '../runtime/flowchart';
+} from '../runtime/flowchart.js';
 
 const TICK_RATE = 10;  // ticks per second
 const TICK_MS = 1000 / TICK_RATE;

@@ -2,6 +2,44 @@
 
 > *You are the only human on the battlefield. Everyone else is an agent.*
 
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/Ishnoor-Singh/warchief.git
+cd warchief
+npm install
+cd client && npm install && cd ..
+
+# Build
+npm run build
+
+# Run
+npm start
+# → Open http://localhost:3000
+```
+
+**You'll need your own Anthropic API key.** Enter it in the browser when prompted. Keys are used client-side only and never stored.
+
+### Docker
+
+```bash
+docker build -t warchief .
+docker run -p 3000:3000 warchief
+```
+
+### Development
+
+```bash
+# Terminal 1: Server
+npm run dev
+
+# Terminal 2: Client (hot reload)
+npm run dev:client
+```
+
+---
+
 ## What Is This?
 
 Warchief is a real-time battle strategy game where your only interface is natural language. No clicking units, no build menus, no drag-to-select. You are a battle commander. You communicate — via orders, speeches, and direct messages — to a hierarchy of AI lieutenants, who in turn program and command their troops.

@@ -1,7 +1,7 @@
 // Event system - the core primitive for agent behavior
 // Lieutenants write in this vocabulary, troops execute it
 
-import { Vec2, FormationType } from '../types';
+import { Vec2, FormationType } from '../types/index.js';
 
 // Events that can be received by an agent
 export type EventType = 

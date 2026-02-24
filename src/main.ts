@@ -1,8 +1,8 @@
 // Warchief - Phase 1 Test Runner
 // Run a battle in the terminal to verify simulation works
 
-import { createSimulation, startSimulation, stopSimulation, getBattleSummary, SimulationState } from './server/sim/simulation';
-import { createBasicScenario, createAssaultScenario } from './server/sim/scenario';
+import { createSimulation, startSimulation, stopSimulation, getBattleSummary, SimulationState } from './server/sim/simulation.js';
+import { createBasicScenario, createAssaultScenario } from './server/sim/scenario.js';
 
 // ANSI colors for terminal output
 const colors = {

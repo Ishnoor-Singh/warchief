@@ -11,11 +11,13 @@ import {
   VisibleEnemy,
   TroopStats
 } from '../../shared/types/index.js';
-import { 
-  GameEvent, 
+import {
+  GameEvent,
   GameAction,
   EnemySpottedEvent,
-  UnderAttackEvent 
+  UnderAttackEvent,
+  AllyDownEvent,
+  CasualtyThresholdEvent,
 } from '../../shared/events/index.js';
 import { 
   FlowchartRuntime, 
@@ -29,11 +31,19 @@ const TICK_RATE = 10;  // ticks per second
 const TICK_MS = 1000 / TICK_RATE;
 const COMBAT_RANGE = 25;  // units must be this close to fight
 const BASE_DAMAGE = 10;   // base damage per combat tick
+const VISIBILITY_EVENT_INTERVAL = 10;  // fire enemy_spotted every N ticks (1/sec)
+
+// Callback for actions that need to route messages to the server layer
+export interface SimulationCallbacks {
+  onTroopMessage?: (agentId: string, type: 'requestSupport' | 'report' | 'alert', message: string) => void;
+}
 
 export interface SimulationState {
   battle: BattleState;
   runtimes: Map<string, FlowchartRuntime>;  // flowchart runtime per agent
   lastCombat: Map<string, number>;  // track combat cooldowns
+  squadCasualties: Map<string, { total: number; dead: number }>;  // per-squad loss tracking
+  callbacks: SimulationCallbacks;
   onTick?: (state: SimulationState) => void;
   onBattleEnd?: (winner: Team) => void;
 }
@@ -43,7 +53,8 @@ export function createSimulation(
   width: number,
   height: number,
   agents: AgentState[],
-  flowcharts: Flowchart[]
+  flowcharts: Flowchart[],
+  callbacks: SimulationCallbacks = {}
 ): SimulationState {
   const battle: BattleState = {
     tick: 0,
@@ -59,10 +70,23 @@ export function createSimulation(
     runtimes.set(flowchart.agentId, createFlowchartRuntime(flowchart));
   }
 
+  // Build squad casualty tracking
+  const squadCasualties = new Map<string, { total: number; dead: number }>();
+  for (const agent of agents) {
+    if (agent.type === 'troop' && agent.squadId) {
+      const key = `${agent.team}:${agent.squadId}`;
+      const existing = squadCasualties.get(key) || { total: 0, dead: 0 };
+      existing.total++;
+      squadCasualties.set(key, existing);
+    }
+  }
+
   return {
     battle,
     runtimes,
     lastCombat: new Map(),
+    squadCasualties,
+    callbacks,
   };
 }
 
@@ -135,16 +159,21 @@ function getVisibleEnemies(state: SimulationState, agent: AgentState): VisibleEn
   return visible;
 }
 
-// Update visibility and queue spotted events
+// Update visibility and queue spotted events (throttled to reduce event thrashing)
 function updateVisibility(state: SimulationState): void {
-  for (const [agentId, agent] of state.battle.agents) {
+  const shouldFireVisibility = state.battle.tick % VISIBILITY_EVENT_INTERVAL === 0;
+
+  for (const [_agentId, agent] of state.battle.agents) {
     if (!agent.alive) continue;
-    
-    const runtime = state.runtimes.get(agentId);
+
+    const runtime = state.runtimes.get(agent.id);
     if (!runtime) continue;
-    
+
+    // Only fire visibility events every VISIBILITY_EVENT_INTERVAL ticks
+    if (!shouldFireVisibility) continue;
+
     const visible = getVisibleEnemies(state, agent);
-    
+
     // Queue enemy_spotted for closest visible enemy
     if (visible.length > 0) {
       const closest = visible.reduce((a, b) => a.distance < b.distance ? a : b);
@@ -205,13 +234,11 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
       break;
       
     case 'requestSupport':
-      // TODO: Route to lieutenant
-      console.log(`[${agentId}] requests support: ${action.message}`);
+      state.callbacks.onTroopMessage?.(agentId, 'requestSupport', action.message);
       break;
-      
+
     case 'emit':
-      // TODO: Route message up chain
-      console.log(`[${agentId}] ${action.eventType}: ${action.message}`);
+      state.callbacks.onTroopMessage?.(agentId, action.eventType, action.message);
       break;
   }
 }
@@ -340,15 +367,53 @@ function applyDamage(state: SimulationState, agent: AgentState, result: CombatRe
     agent.health = 0;
     agent.alive = false;
     result.defenderDied = true;
-    
-    // Reduce morale of nearby allies
+
+    // Fire ally_down event and reduce morale for nearby allies
     for (const other of state.battle.agents.values()) {
       if (other.team !== agent.team) continue;
       if (!other.alive) continue;
-      
+
       const dist = distance(agent.position, other.position);
       if (dist < 50) {
         other.morale = Math.max(0, other.morale - 5);
+
+        // Queue ally_down event
+        const otherRuntime = state.runtimes.get(other.id);
+        if (otherRuntime) {
+          const allyDownEvent: AllyDownEvent = {
+            type: 'ally_down',
+            unitId: agent.id,
+            position: { ...agent.position },
+          };
+          queueEvent(otherRuntime, allyDownEvent);
+        }
+      }
+    }
+
+    // Track squad casualties and fire casualty_threshold
+    if (agent.squadId) {
+      const key = `${agent.team}:${agent.squadId}`;
+      const squad = state.squadCasualties.get(key);
+      if (squad) {
+        squad.dead++;
+        const lossPercent = Math.round((squad.dead / squad.total) * 100);
+
+        // Fire casualty_threshold for all alive agents in same squad
+        if (lossPercent >= 25) {
+          for (const other of state.battle.agents.values()) {
+            if (other.team !== agent.team || !other.alive) continue;
+            if (other.squadId !== agent.squadId) continue;
+
+            const otherRuntime = state.runtimes.get(other.id);
+            if (otherRuntime) {
+              const casualtyEvent: CasualtyThresholdEvent = {
+                type: 'casualty_threshold',
+                lossPercent,
+              };
+              queueEvent(otherRuntime, casualtyEvent);
+            }
+          }
+        }
       }
     }
   }
@@ -480,8 +545,8 @@ export function getFilteredStateForTeam(state: SimulationState, team: Team): Fil
     }
   }
 
-  // Combine all visible agents
-  const allVisible = [...Array.from(state.battle.agents.values()).filter(a => a.team === team), ...visibleEnemies];
+  // Combine alive friendly agents + visible enemies
+  const allVisible = [...friendlyAgents, ...visibleEnemies];
 
   return {
     tick: state.battle.tick,

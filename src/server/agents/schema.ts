@@ -106,10 +106,21 @@ export function validateLieutenantOutput(raw: unknown): ValidationResult {
   }
 }
 
+// Strip markdown code fences and surrounding text from LLM output
+function extractJSON(text: string): string {
+  // Try to extract from markdown fences first
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenceMatch) {
+    return fenceMatch[1]!.trim();
+  }
+  return text.trim();
+}
+
 // Parse JSON string and validate
 export function parseLieutenantOutput(jsonString: string): ValidationResult {
   try {
-    const raw = JSON.parse(jsonString);
+    const cleaned = extractJSON(jsonString);
+    const raw = JSON.parse(cleaned);
     return validateLieutenantOutput(raw);
   } catch (e) {
     return { success: false, error: `Invalid JSON: ${(e as Error).message}` };

@@ -13,6 +13,9 @@ export function useWebSocket(url: string, onMessage?: (message: unknown) => void
   const [lastMessage, setLastMessage] = useState<unknown | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Store onMessage in a ref so changing it doesn't trigger reconnect
+  const onMessageRef = useRef(onMessage);
+  onMessageRef.current = onMessage;
 
   const connect = useCallback(() => {
     try {
@@ -37,7 +40,7 @@ export function useWebSocket(url: string, onMessage?: (message: unknown) => void
         try {
           const message = JSON.parse(event.data);
           setLastMessage(message);
-          onMessage?.(message);
+          onMessageRef.current?.(message);
         } catch (e) {
           console.error('Failed to parse message:', e);
         }
@@ -45,7 +48,7 @@ export function useWebSocket(url: string, onMessage?: (message: unknown) => void
     } catch (e) {
       setStatus('error');
     }
-  }, [url, onMessage]);
+  }, [url]);
 
   useEffect(() => {
     connect();

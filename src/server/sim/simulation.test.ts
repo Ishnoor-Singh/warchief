@@ -128,9 +128,9 @@ describe('Simulation Enhancements', () => {
       const scenario = createBasicScenario();
       const sim = createSimulation(scenario.width, scenario.height, scenario.agents, scenario.flowcharts);
 
-      // Run a few ticks to trigger events
+      // Run enough ticks to cross the visibility event interval (fires every 10 ticks)
       sim.battle.running = true;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 11; i++) {
         simulationTick(sim);
       }
 
@@ -144,6 +144,143 @@ describe('Simulation Enhancements', () => {
       }
 
       expect(hasCurrentNode).toBe(true);
+    });
+  });
+
+  describe('ally_down events', () => {
+    it('reduces morale of nearby allies when a troop dies in combat', () => {
+      const scenario = createBasicScenario();
+      const sim = createSimulation(scenario.width, scenario.height, scenario.agents, scenario.flowcharts);
+
+      // Get two player agents and place them close together
+      const playerAgents = Array.from(sim.battle.agents.values()).filter(a => a.team === 'player');
+      const victim = playerAgents[0]!;
+      const nearby = playerAgents[1]!;
+      nearby.position = { x: victim.position.x + 10, y: victim.position.y };
+
+      // Put an enemy right on top of the victim to trigger combat
+      const enemy = Array.from(sim.battle.agents.values()).find(a => a.team === 'enemy')!;
+      enemy.position = { ...victim.position };
+      victim.health = 1; // will die on next combat tick
+
+      sim.battle.running = true;
+      simulationTick(sim);
+
+      // Nearby ally's morale should have dropped
+      expect(nearby.morale).toBeLessThan(100);
+    });
+  });
+
+  describe('squad casualty tracking', () => {
+    it('initializes squad casualty tracking from scenario agents', () => {
+      const scenario = createBasicScenario();
+      const sim = createSimulation(scenario.width, scenario.height, scenario.agents, scenario.flowcharts);
+
+      // Basic scenario has player squad_1 with 10 troops
+      const key = 'player:squad_1';
+      const squadInfo = sim.squadCasualties.get(key);
+      expect(squadInfo).toBeDefined();
+      expect(squadInfo!.total).toBe(10);
+      expect(squadInfo!.dead).toBe(0);
+    });
+  });
+
+  describe('troop message callbacks', () => {
+    it('calls onTroopMessage callback when requestSupport action is executed', () => {
+      const messages: Array<{ agentId: string; type: string; message: string }> = [];
+      const scenario = createBasicScenario();
+      const sim = createSimulation(
+        scenario.width, scenario.height, scenario.agents, scenario.flowcharts,
+        {
+          onTroopMessage: (agentId, type, message) => {
+            messages.push({ agentId, type, message });
+          },
+        }
+      );
+
+      // Override one agent's flowchart to include requestSupport
+      const agentId = Array.from(sim.battle.agents.keys()).find(id => id.startsWith('p_s1'))!;
+      const runtime = sim.runtimes.get(agentId)!;
+      runtime.flowchart = {
+        agentId,
+        nodes: [{
+          id: 'request_help',
+          on: 'under_attack',
+          action: { type: 'requestSupport', message: 'Taking heavy fire!' },
+          priority: 10,
+        }],
+        defaultAction: { type: 'hold' },
+      };
+
+      // Place an enemy right next to this agent to trigger combat → under_attack
+      const enemy = Array.from(sim.battle.agents.values()).find(a => a.team === 'enemy')!;
+      const agent = sim.battle.agents.get(agentId)!;
+      enemy.position = { ...agent.position };
+
+      sim.battle.running = true;
+      // Tick once for combat to happen → under_attack queued
+      simulationTick(sim);
+      // Tick again at the visibility interval to process the queued under_attack
+      for (let i = 0; i < 10; i++) simulationTick(sim);
+
+      expect(messages.length).toBeGreaterThan(0);
+      expect(messages.some(m => m.type === 'requestSupport' && m.message === 'Taking heavy fire!')).toBe(true);
+    });
+  });
+
+  describe('visibility throttling', () => {
+    it('does not fire enemy_spotted on ticks that are not at the interval', () => {
+      const scenario = createBasicScenario();
+      const sim = createSimulation(scenario.width, scenario.height, scenario.agents, scenario.flowcharts);
+
+      // Place agents close so they can see each other
+      const playerAgent = Array.from(sim.battle.agents.values()).find(a => a.team === 'player')!;
+      const enemyAgent = Array.from(sim.battle.agents.values()).find(a => a.team === 'enemy')!;
+      playerAgent.position = { x: 300, y: 150 };
+      enemyAgent.position = { x: 310, y: 150 };
+
+      const runtime = sim.runtimes.get(playerAgent.id)!;
+
+      sim.battle.running = true;
+      // Tick once (tick 1) — not at interval, no visibility events
+      simulationTick(sim);
+
+      // currentNodeId should still be null — only tick events fire, no matching nodes
+      expect(runtime.currentNodeId).toBeNull();
+    });
+
+    it('fires enemy_spotted at the visibility interval tick', () => {
+      const scenario = createBasicScenario();
+      const sim = createSimulation(scenario.width, scenario.height, scenario.agents, scenario.flowcharts);
+
+      const playerAgent = Array.from(sim.battle.agents.values()).find(a => a.team === 'player')!;
+      const enemyAgent = Array.from(sim.battle.agents.values()).find(a => a.team === 'enemy')!;
+      playerAgent.position = { x: 300, y: 150 };
+      enemyAgent.position = { x: 310, y: 150 };
+
+      const runtime = sim.runtimes.get(playerAgent.id)!;
+
+      sim.battle.running = true;
+      // Tick to interval (10 ticks)
+      for (let i = 0; i < 10; i++) simulationTick(sim);
+
+      // Now a node should have been triggered from enemy_spotted
+      expect(runtime.currentNodeId).not.toBeNull();
+    });
+  });
+
+  describe('filtered state excludes dead friendlies', () => {
+    it('does not include dead friendly agents in filtered state', () => {
+      const scenario = createBasicScenario();
+      const sim = createSimulation(scenario.width, scenario.height, scenario.agents, scenario.flowcharts);
+
+      const playerAgent = Array.from(sim.battle.agents.values()).find(a => a.team === 'player')!;
+      playerAgent.alive = false;
+      playerAgent.health = 0;
+
+      const filtered = getFilteredStateForTeam(sim, 'player');
+      const deadInFiltered = filtered.agents.filter(a => !a.alive);
+      expect(deadInFiltered.length).toBe(0);
     });
   });
 

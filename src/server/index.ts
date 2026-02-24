@@ -8,10 +8,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
 
-import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, SimulationState } from './sim/simulation.js';
+import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, SimulationState, distance } from './sim/simulation.js';
 import { createBasicScenario, createAssaultScenario } from './sim/scenario.js';
 import { createLieutenant, processOrder, Lieutenant, LLMClient, OrderContext } from './agents/lieutenant.js';
-import { VisibleUnitInfo } from './agents/input-builder.js';
+import { VisibleUnitInfo, VisibleEnemyInfo } from './agents/input-builder.js';
 import { compileDirectives, applyFlowcharts } from './agents/compiler.js';
 import { createAICommander, generateCommanderOrders, AICommander } from './agents/ai-commander.js';
 
@@ -172,12 +172,37 @@ async function handleMessage(session: GameSession, message: { type: string; data
       // Create scenario
       const scenarioData = scenario === 'assault' ? createAssaultScenario() : createBasicScenario();
 
-      // Create simulation
+      // Create simulation with message routing callbacks
       session.simulation = createSimulation(
         scenarioData.width,
         scenarioData.height,
         scenarioData.agents,
-        scenarioData.flowcharts
+        scenarioData.flowcharts,
+        {
+          onTroopMessage: (agentId, type, message) => {
+            // Find which lieutenant this troop reports to
+            const agent = session.simulation?.battle.agents.get(agentId);
+            if (!agent) return;
+            const lt = session.lieutenants.find(l => l.troopIds.includes(agentId))
+              || session.enemyLieutenants.find(l => l.troopIds.includes(agentId));
+
+            // Only relay player troop messages to the client
+            if (agent.team === 'player') {
+              send(ws, {
+                type: 'message',
+                data: {
+                  id: `msg_${Date.now()}_${agentId}`,
+                  from: lt?.id || agentId,
+                  to: 'commander',
+                  content: `[${agentId}] ${message}`,
+                  timestamp: Date.now(),
+                  tick: session.simulation?.battle.tick ?? 0,
+                  type: type === 'alert' ? 'alert' : 'report',
+                },
+              });
+            }
+          },
+        }
       );
 
       // Create player lieutenants
@@ -319,6 +344,47 @@ async function handleMessage(session: GameSession, message: { type: string; data
           session.timer = null;
         }
         send(ws, { type: 'battle_paused', data: {} });
+      }
+      break;
+    }
+
+    case 'resume_battle': {
+      if (session.simulation && !session.simulation.battle.running) {
+        session.simulation.battle.running = true;
+
+        // Restart the simulation loop
+        session.timer = setInterval(() => {
+          if (session.simulation && session.simulation.battle.running) {
+            simulationTick(session.simulation);
+
+            if (session.simulation.battle.tick % 5 === 0) {
+              sendBattleState(session);
+            }
+
+            if (
+              session.aiCommander &&
+              !session.aiCommander.busy &&
+              session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
+              session.simulation.battle.tick > 0
+            ) {
+              runAICommanderCycle(session).catch(err => {
+                console.error('AI Commander error:', err);
+              });
+            }
+
+            if (session.simulation.battle.winner) {
+              if (session.timer) clearInterval(session.timer);
+
+              const summary = getDetailedBattleSummary(session.simulation);
+              send(ws, {
+                type: 'battle_end',
+                data: { winner: summary.winner, summary },
+              });
+            }
+          }
+        }, 100);
+
+        send(ws, { type: 'battle_resumed', data: {} });
       }
       break;
     }
@@ -475,9 +541,36 @@ function buildOrderContext(session: GameSession, lieutenant: Lieutenant): OrderC
       morale: a.morale,
     }));
 
+  // Aggregate enemy visibility across all of this lieutenant's troops
+  const visibleEnemies: VisibleEnemyInfo[] = [];
+  const seenEnemyIds = new Set<string>();
+
+  if (session.simulation) {
+    for (const troopId of lieutenant.troopIds) {
+      const troop = session.simulation.battle.agents.get(troopId);
+      if (!troop || !troop.alive) continue;
+
+      for (const agent of session.simulation.battle.agents.values()) {
+        if (agent.team === troop.team || !agent.alive) continue;
+        if (seenEnemyIds.has(agent.id)) continue;
+
+        const dist = distance(troop.position, agent.position);
+        if (dist <= troop.visibilityRadius) {
+          seenEnemyIds.add(agent.id);
+          visibleEnemies.push({
+            id: agent.id,
+            position: { x: agent.position.x, y: agent.position.y },
+            distance: dist,
+          });
+        }
+      }
+    }
+  }
+
   return {
     currentOrders: '',
     visibleUnits,
+    visibleEnemies,
     terrain: 'Open battlefield with ridge formations',
   };
 }

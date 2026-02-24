@@ -16,6 +16,12 @@ export interface VisibleUnitInfo {
   morale: number;
 }
 
+export interface VisibleEnemyInfo {
+  id: string;
+  position: Vec2;
+  distance: number;
+}
+
 export interface RecentMessage {
   from: string;
   content: string;
@@ -26,6 +32,7 @@ export interface LieutenantContext {
   identity: LieutenantIdentity;
   currentOrders: string;
   visibleUnits: VisibleUnitInfo[];
+  visibleEnemies?: VisibleEnemyInfo[];
   authorizedPeers: string[];
   terrain: string;
   recentMessages: RecentMessage[];
@@ -82,8 +89,8 @@ const ACTION_TYPES = [
 ];
 
 export function buildLieutenantPrompt(context: LieutenantContext): string {
-  const { identity, currentOrders, visibleUnits, authorizedPeers, terrain, recentMessages } = context;
-  
+  const { identity, currentOrders, visibleUnits, visibleEnemies, authorizedPeers, terrain, recentMessages } = context;
+
   const sections: string[] = [];
   
   // Identity section
@@ -108,6 +115,20 @@ ${currentOrders}`);
   
   sections.push(`# Units Under Your Command
 ${unitList || '(No units currently visible)'}`);
+
+  // Visible enemies
+  if (visibleEnemies !== undefined) {
+    if (visibleEnemies.length > 0) {
+      const enemyList = visibleEnemies.map(e =>
+        `- Enemy ${e.id} at (${e.position.x}, ${e.position.y}) — distance: ${Math.round(e.distance)}`
+      ).join('\n');
+      sections.push(`# Visible Enemy Positions
+${enemyList}`);
+    } else {
+      sections.push(`# Visible Enemy Positions
+No enemies currently visible.`);
+    }
+  }
 
   // Authorized peers
   sections.push(`# Authorized Peer Communication

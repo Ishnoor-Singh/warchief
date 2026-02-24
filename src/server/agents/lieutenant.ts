@@ -2,7 +2,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { LieutenantStats } from '../../shared/types/index.js';
-import { buildLieutenantPrompt, LieutenantContext, RecentMessage, VisibleUnitInfo } from './input-builder.js';
+import { buildLieutenantPrompt, LieutenantContext, RecentMessage, VisibleUnitInfo, VisibleEnemyInfo } from './input-builder.js';
 import { parseLieutenantOutput, LieutenantOutput } from './schema.js';
 
 export interface LieutenantConfig {
@@ -29,6 +29,7 @@ export interface Lieutenant {
 export interface OrderContext {
   currentOrders: string;
   visibleUnits: VisibleUnitInfo[];
+  visibleEnemies?: VisibleEnemyInfo[];
   terrain: string;
 }
 
@@ -110,6 +111,7 @@ export async function processOrder(
     },
     currentOrders: context.currentOrders || order,
     visibleUnits: context.visibleUnits,
+    visibleEnemies: context.visibleEnemies,
     authorizedPeers: lieutenant.authorizedPeers,
     terrain: context.terrain,
     recentMessages: lieutenant.messageHistory,

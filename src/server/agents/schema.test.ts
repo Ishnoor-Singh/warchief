@@ -241,7 +241,25 @@ describe('LieutenantOutput Schema Validation', () => {
           ]
         }
       `;
-      
+
+      const result = parseLieutenantOutput(json);
+      expect(result.success).toBe(true);
+    });
+
+    it('strips markdown code fences from LLM output', () => {
+      const json = '```json\n{"directives": [{"unit": "all", "nodes": [{"id": "hold", "on": "tick", "action": {"type": "hold"}}]}]}\n```';
+      const result = parseLieutenantOutput(json);
+      expect(result.success).toBe(true);
+    });
+
+    it('strips markdown fences without language tag', () => {
+      const json = '```\n{"directives": [{"unit": "all", "nodes": [{"id": "hold", "on": "tick", "action": {"type": "hold"}}]}]}\n```';
+      const result = parseLieutenantOutput(json);
+      expect(result.success).toBe(true);
+    });
+
+    it('handles LLM output with text before/after JSON', () => {
+      const json = 'Here is my response:\n```json\n{"directives": [{"unit": "all", "nodes": [{"id": "hold", "on": "tick", "action": {"type": "hold"}}]}]}\n```\nLet me know if you need changes.';
       const result = parseLieutenantOutput(json);
       expect(result.success).toBe(true);
     });

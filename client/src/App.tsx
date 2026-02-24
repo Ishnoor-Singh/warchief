@@ -5,11 +5,13 @@ import { FlowchartPanel } from './components/FlowchartPanel';
 import { PreBattleScreen } from './components/PreBattleScreen';
 import { SetupScreen } from './components/SetupScreen';
 import { EndScreen } from './components/EndScreen';
+import { LandingScreen } from './components/LandingScreen';
+import { InstructionsScreen } from './components/InstructionsScreen';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode } from './types';
 import './App.css';
 
-type GamePhase = 'setup' | 'pre-battle' | 'battle' | 'post-battle';
+type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle';
 
 interface Model {
   id: string;
@@ -32,7 +34,7 @@ const emptyBattleState: BattleState = {
 };
 
 function App() {
-  const [phase, setPhase] = useState<GamePhase>('setup');
+  const [phase, setPhase] = useState<GamePhase>('landing');
   const [battleState, setBattleState] = useState<BattleState>(emptyBattleState);
   const [lieutenants, setLieutenants] = useState<Lieutenant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -246,12 +248,14 @@ function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <h1>WARCHIEF</h1>
+      <header className={`app-header ${phase === 'landing' || phase === 'instructions' ? 'minimal' : ''}`}>
+        <h1 className="header-logo" onClick={() => setPhase('landing')} style={{ cursor: 'pointer' }}>WARCHIEF</h1>
         <div className="header-info">
-          <span className="connection-status" title={status}>
-            {connectionStatus}
-          </span>
+          {phase !== 'landing' && phase !== 'instructions' && (
+            <span className="connection-status" title={status}>
+              {connectionStatus}
+            </span>
+          )}
           {phase === 'battle' && (
             <>
               <span className="tick">Tick: {battleState.tick}</span>
@@ -274,7 +278,17 @@ function App() {
         </div>
       </header>
 
-      {phase === 'setup' ? (
+      {phase === 'landing' ? (
+        <LandingScreen
+          onPlay={() => setPhase('setup')}
+          onHowToPlay={() => setPhase('instructions')}
+        />
+      ) : phase === 'instructions' ? (
+        <InstructionsScreen
+          onBack={() => setPhase('landing')}
+          onPlay={() => setPhase('setup')}
+        />
+      ) : phase === 'setup' ? (
         <SetupScreen
           models={models}
           selectedModel={selectedModel}

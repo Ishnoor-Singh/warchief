@@ -269,6 +269,16 @@ export function createPersonalityFlowchart(
   }
 }
 
+// Default flowchart for a lieutenant agent — keeps them alive in the sim
+// with no troop-style behavior; self_directives from LLM output replace this
+export function createLieutenantDefaultFlowchart(agentId: string): Flowchart {
+  return {
+    agentId,
+    nodes: [],
+    defaultAction: { type: 'hold' },
+  };
+}
+
 export function createFallbackFlowchart(agentId: string, fallbackPosition: Vec2): Flowchart {
   return {
     agentId,

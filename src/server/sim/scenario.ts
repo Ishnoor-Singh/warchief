@@ -1,7 +1,7 @@
 // Test scenario: Two armies with basic engage-on-sight flowcharts
 
 import { AgentState, TroopAgent, Vec2, Team, TroopStats, LieutenantStats } from '../../shared/types/index.js';
-import { Flowchart, createEngageOnSightFlowchart, createHoldPositionFlowchart } from '../runtime/flowchart.js';
+import { Flowchart, createEngageOnSightFlowchart, createHoldPositionFlowchart, createLieutenantDefaultFlowchart } from '../runtime/flowchart.js';
 
 // Create a troop agent
 function createTroop(
@@ -138,16 +138,21 @@ export function createBasicScenario(): ScenarioSetup {
   const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 370, y: 200 });
 
   agents.push(...enemySquad1, ...enemySquad2, ...enemySquad3, ltEnemy1, ltEnemy2);
-  
+
   // Create flowcharts for all agents
   // Player troops: engage on sight (will advance toward enemy)
   for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {
     flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 350, y: 150 }));
   }
-  
+
   // Enemy troops: hold position (defensive) - they advance toward player if no contact
   for (const agent of [...enemySquad1, ...enemySquad2, ...enemySquad3]) {
     flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 50, y: 150 }));
+  }
+
+  // Default flowcharts for lieutenant agents so they participate in the sim
+  for (const lt of [ltAlpha, ltBravo, ltEnemy1, ltEnemy2]) {
+    flowcharts.push(createLieutenantDefaultFlowchart(lt.id));
   }
   
   return { agents, flowcharts, width, height };
@@ -184,14 +189,19 @@ export function createAssaultScenario(): ScenarioSetup {
   const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 420, y: 180 });
 
   agents.push(...enemySquad1, ...enemySquad2, ltEnemy1, ltEnemy2);
-  
+
   // Flowcharts
   for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {
     flowcharts.push(createEngageOnSightFlowchart(agent.id));
   }
-  
+
   for (const agent of [...enemySquad1, ...enemySquad2]) {
     flowcharts.push(createHoldPositionFlowchart(agent.id));
+  }
+
+  // Default flowcharts for lieutenant agents so they participate in the sim
+  for (const lt of [ltAlpha, ltBravo, ltCharlie, ltEnemy1, ltEnemy2]) {
+    flowcharts.push(createLieutenantDefaultFlowchart(lt.id));
   }
   
   return { agents, flowcharts, width, height };

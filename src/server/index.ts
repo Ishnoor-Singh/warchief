@@ -435,8 +435,8 @@ async function handleMessage(session: GameSession, message: { type: string; data
         briefLt.busy = false;
 
         if (result.success && result.output) {
-          // Apply flowcharts from this briefing round
-          const compiled = compileDirectives(result.output, briefLt.troopIds);
+          // Apply flowcharts from this briefing round (including self_directives for the lieutenant)
+          const compiled = compileDirectives(result.output, briefLt.troopIds, briefLt.id);
           applyFlowcharts(compiled, session.simulation!.runtimes);
 
           // Send updated flowchart
@@ -747,8 +747,8 @@ async function handleMessage(session: GameSession, message: { type: string; data
             },
           });
 
-          // Compile and apply flowcharts
-          const compiled = compileDirectives(result.output, lieutenant.troopIds);
+          // Compile and apply flowcharts (including self_directives for the lieutenant)
+          const compiled = compileDirectives(result.output, lieutenant.troopIds, lieutenant.id);
           if (session.simulation) {
             applyFlowcharts(compiled, session.simulation.runtimes);
 
@@ -1104,8 +1104,8 @@ async function processInitialBriefing(session: GameSession, lieutenant: Lieutena
   const result = await processOrderWithModel(session, lieutenant, briefing, context);
 
   if (result.success && result.output) {
-    // Apply the compiled flowcharts
-    const compiled = compileDirectives(result.output, lieutenant.troopIds);
+    // Apply the compiled flowcharts (including self_directives for the lieutenant)
+    const compiled = compileDirectives(result.output, lieutenant.troopIds, lieutenant.id);
     if (session.simulation) {
       applyFlowcharts(compiled, session.simulation.runtimes);
 
@@ -1169,7 +1169,7 @@ async function briefTeamLieutenants(session: GameSession, commander: AICommander
         const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
 
         if (ltResult.success && ltResult.output) {
-          const compiled = compileDirectives(ltResult.output, lt.troopIds);
+          const compiled = compileDirectives(ltResult.output, lt.troopIds, lt.id);
           applyFlowcharts(compiled, session.simulation!.runtimes);
 
           // Send updated lieutenant-level flowchart
@@ -1216,7 +1216,7 @@ async function runAICommanderCycle(session: GameSession, commander: AICommander,
         const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
 
         if (ltResult.success && ltResult.output) {
-          const compiled = compileDirectives(ltResult.output, lt.troopIds);
+          const compiled = compileDirectives(ltResult.output, lt.troopIds, lt.id);
           if (session.simulation) {
             applyFlowcharts(compiled, session.simulation.runtimes);
 

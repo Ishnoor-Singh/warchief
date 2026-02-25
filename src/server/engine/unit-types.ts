@@ -38,6 +38,9 @@ import type {
 } from '../../shared/types/index.js';
 import { clone } from './vec2.js';
 
+// Re-export agent types for convenience
+export type { TroopAgent, LieutenantAgent } from '../../shared/types/index.js';
+
 // ─── Default Stats ──────────────────────────────────────────────────────────
 
 /** Default stats for a generic troop. */

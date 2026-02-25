@@ -68,6 +68,8 @@ export type {
   LieutenantPreset,
   CreateTroopOptions,
   CreateLieutenantOptions,
+  TroopAgent,
+  LieutenantAgent,
 } from './unit-types.js';
 
 // Combat

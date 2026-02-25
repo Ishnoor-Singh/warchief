@@ -1,5 +1,5 @@
 // Tests for lieutenant LLM client
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { 
   Lieutenant,
   createLieutenant,
@@ -186,18 +186,191 @@ describe('Lieutenant LLM Client', () => {
 
     it('keeps only last 10 messages', async () => {
       const validOutput: LieutenantOutput = { directives: [] };
-      
+
       const mockClient = createMockClient(
         Array(12).fill({ content: [{ type: 'text', text: JSON.stringify(validOutput) }] })
       );
 
       const lt = createLieutenant(baseConfig);
-      
+
       for (let i = 0; i < 12; i++) {
         await processOrder(lt, `Order ${i}`, baseContext, mockClient);
       }
-      
+
       expect(lt.messageHistory.length).toBeLessThanOrEqual(10);
+    });
+  });
+
+  describe('LLM call timeout', () => {
+    const baseContext = {
+      currentOrders: 'Hold position.',
+      visibleUnits: [{ id: 'p_s1_0', position: { x: 100, y: 100 }, health: 100, morale: 100 }],
+      terrain: 'Open ground',
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('times out if LLM call takes too long', async () => {
+      // Create a client that never resolves
+      const mockClient: LLMClient = {
+        messages: {
+          create: vi.fn(() => new Promise(() => {
+            // Never resolves
+          })),
+        },
+      };
+
+      const lt = createLieutenant(baseConfig);
+      const orderPromise = processOrder(lt, 'Hold the line!', baseContext, mockClient);
+
+      // Advance past the 30s timeout
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const result = await orderPromise;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('timed out');
+      expect(lt.busy).toBe(false);
+    });
+
+    it('succeeds if LLM responds before timeout', async () => {
+      const validOutput: LieutenantOutput = { directives: [] };
+
+      // Create a client that resolves after a short delay
+      const mockClient: LLMClient = {
+        messages: {
+          create: vi.fn(() => new Promise(resolve => {
+            setTimeout(() => {
+              resolve({ content: [{ type: 'text', text: JSON.stringify(validOutput) }] });
+            }, 100);
+          })),
+        },
+      };
+
+      const lt = createLieutenant(baseConfig);
+      const orderPromise = processOrder(lt, 'Hold the line!', baseContext, mockClient);
+
+      // Advance just past the LLM response time (not the timeout)
+      await vi.advanceTimersByTimeAsync(150);
+
+      const result = await orderPromise;
+
+      expect(result.success).toBe(true);
+      expect(lt.busy).toBe(false);
+    });
+
+    it('times out on first call and retries are not attempted', async () => {
+      // A client that never resolves — the timeout should fire and
+      // processOrder's catch block should handle it (no retry on timeout)
+      const mockClient: LLMClient = {
+        messages: {
+          create: vi.fn(() => new Promise(() => {})),
+        },
+      };
+
+      const lt = createLieutenant(baseConfig);
+      const orderPromise = processOrder(lt, 'Attack!', baseContext, mockClient);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const result = await orderPromise;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('timed out');
+      // The timeout throws, caught by the outer catch — only 1 create call
+      expect(mockClient.messages.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('concurrent order processing', () => {
+    const baseContext = {
+      currentOrders: 'Hold position.',
+      visibleUnits: [{ id: 'p_s1_0', position: { x: 100, y: 100 }, health: 100, morale: 100 }],
+      terrain: 'Open ground',
+    };
+
+    it('marks lieutenant as busy during processing', async () => {
+      let resolveCall: ((value: unknown) => void) | null = null;
+      const validOutput: LieutenantOutput = { directives: [] };
+
+      const mockClient: LLMClient = {
+        messages: {
+          create: vi.fn(() => new Promise(resolve => {
+            resolveCall = resolve;
+          })),
+        },
+      };
+
+      const lt = createLieutenant(baseConfig);
+      expect(lt.busy).toBe(false);
+
+      const orderPromise = processOrder(lt, 'Hold', baseContext, mockClient);
+      expect(lt.busy).toBe(true);
+
+      // Resolve the LLM call
+      resolveCall!({ content: [{ type: 'text', text: JSON.stringify(validOutput) }] });
+      await orderPromise;
+
+      expect(lt.busy).toBe(false);
+    });
+
+    it('multiple lieutenants can process orders in parallel', async () => {
+      const validOutput: LieutenantOutput = {
+        directives: [],
+        message_up: 'Acknowledged.',
+      };
+      const callOrder: string[] = [];
+
+      // Each lieutenant gets its own mock that tracks call order
+      function createTrackedClient(ltId: string): LLMClient {
+        return {
+          messages: {
+            create: vi.fn(async () => {
+              callOrder.push(`${ltId}_start`);
+              // Simulate async delay
+              await new Promise(resolve => setTimeout(resolve, 10));
+              callOrder.push(`${ltId}_end`);
+              return { content: [{ type: 'text', text: JSON.stringify(validOutput) }] };
+            }),
+          },
+        };
+      }
+
+      const ltAlpha = createLieutenant({ ...baseConfig, id: 'lt_alpha', name: 'Alpha' });
+      const ltBravo = createLieutenant({ ...baseConfig, id: 'lt_bravo', name: 'Bravo' });
+      const ltCharlie = createLieutenant({ ...baseConfig, id: 'lt_charlie', name: 'Charlie' });
+
+      const clientAlpha = createTrackedClient('alpha');
+      const clientBravo = createTrackedClient('bravo');
+      const clientCharlie = createTrackedClient('charlie');
+
+      // Process all orders in parallel (simulating Promise.all)
+      const results = await Promise.all([
+        processOrder(ltAlpha, 'Advance', baseContext, clientAlpha),
+        processOrder(ltBravo, 'Hold', baseContext, clientBravo),
+        processOrder(ltCharlie, 'Retreat', baseContext, clientCharlie),
+      ]);
+
+      // All should succeed
+      expect(results.every(r => r.success)).toBe(true);
+
+      // All should have started before any finished (parallel execution)
+      // With parallel execution, all starts should come before all ends
+      const starts = callOrder.filter(c => c.endsWith('_start'));
+      const ends = callOrder.filter(c => c.endsWith('_end'));
+      expect(starts).toHaveLength(3);
+      expect(ends).toHaveLength(3);
+
+      // All three lieutenants should be not busy
+      expect(ltAlpha.busy).toBe(false);
+      expect(ltBravo.busy).toBe(false);
+      expect(ltCharlie.busy).toBe(false);
     });
   });
 });

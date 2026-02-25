@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import type { BattleState, Lieutenant, TerrainFeature } from '../types';
+import type { BattleState, Lieutenant } from '../types';
 
 interface Props {
   battleState: BattleState;

@@ -206,6 +206,69 @@ export function createHoldPositionFlowchart(agentId: string): Flowchart {
   };
 }
 
+// Create a personality-appropriate default flowchart for a lieutenant's troops.
+// Used when no briefing is provided, so troops always have meaningful behavior
+// that reflects their lieutenant's personality.
+export function createPersonalityFlowchart(
+  agentId: string,
+  personality: 'aggressive' | 'cautious' | 'disciplined' | 'impulsive',
+  advanceTarget?: Vec2
+): Flowchart {
+  const target = advanceTarget || { x: 200, y: 150 };
+
+  switch (personality) {
+    case 'aggressive':
+      return {
+        agentId,
+        nodes: [
+          { id: 'engage_spotted', on: 'enemy_spotted', action: { type: 'engage', targetId: '' }, priority: 10 },
+          { id: 'counter_attack', on: 'under_attack', action: { type: 'engage', targetId: '' }, priority: 10 },
+          { id: 'advance', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 5 },
+          { id: 'push_on_ally_down', on: 'ally_down', action: { type: 'engage', targetId: '' }, priority: 3 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+
+    case 'cautious':
+      return {
+        agentId,
+        nodes: [
+          { id: 'engage_close', on: 'enemy_spotted', condition: 'distance < 40', action: { type: 'engage', targetId: '' }, priority: 10 },
+          { id: 'hold_far', on: 'enemy_spotted', condition: 'distance >= 40', action: { type: 'hold' }, priority: 5 },
+          { id: 'defend', on: 'under_attack', action: { type: 'engage', targetId: '' }, priority: 8 },
+          { id: 'report_losses', on: 'casualty_threshold', condition: 'lossPercent > 20', action: { type: 'requestSupport', message: 'Taking casualties, requesting support' }, priority: 7 },
+          { id: 'slow_advance', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 1 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+
+    case 'disciplined':
+      return {
+        agentId,
+        nodes: [
+          { id: 'engage_medium', on: 'enemy_spotted', condition: 'distance < 60', action: { type: 'engage', targetId: '' }, priority: 10 },
+          { id: 'hold_position', on: 'enemy_spotted', condition: 'distance >= 60', action: { type: 'hold' }, priority: 5 },
+          { id: 'defend_formation', on: 'under_attack', action: { type: 'engage', targetId: '' }, priority: 8 },
+          { id: 'maintain_line', on: 'no_enemies_visible', action: { type: 'setFormation', formation: 'line' }, priority: 2 },
+          { id: 'advance_ordered', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 1 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+
+    case 'impulsive':
+      return {
+        agentId,
+        nodes: [
+          { id: 'charge', on: 'enemy_spotted', action: { type: 'engage', targetId: '' }, priority: 10 },
+          { id: 'fight_back', on: 'under_attack', action: { type: 'engage', targetId: '' }, priority: 10 },
+          { id: 'rush_forward', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 5 },
+          { id: 'scatter_on_flank', on: 'flanked', action: { type: 'setFormation', formation: 'scatter' }, priority: 8 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+  }
+}
+
 export function createFallbackFlowchart(agentId: string, fallbackPosition: Vec2): Flowchart {
   return {
     agentId,

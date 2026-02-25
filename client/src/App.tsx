@@ -334,17 +334,21 @@ function App() {
 
           <div className="right-panel">
             <div className="lieutenants-bar">
-              {lieutenants.map(lt => (
-                <button
-                  key={lt.id}
-                  className={`lieutenant-tab ${selectedLieutenant === lt.id ? 'selected' : ''} ${lt.busy ? 'busy' : ''}`}
-                  onClick={() => setSelectedLieutenant(lt.id)}
-                >
-                  <span className="lt-name">{lt.name}</span>
-                  <span className={`lt-personality ${lt.personality}`}>{lt.personality}</span>
-                  {lt.busy && <span className="lt-busy">...</span>}
-                </button>
-              ))}
+              {lieutenants.map(lt => {
+                const hasFlowchart = flowcharts[lt.id] && flowcharts[lt.id]!.nodes.length > 0;
+                return (
+                  <button
+                    key={lt.id}
+                    className={`lieutenant-tab ${selectedLieutenant === lt.id ? 'selected' : ''} ${lt.busy ? 'busy' : ''}`}
+                    onClick={() => setSelectedLieutenant(lt.id)}
+                  >
+                    <span className="lt-name">{lt.name}</span>
+                    <span className={`lt-personality ${lt.personality}`}>{lt.personality}</span>
+                    {lt.busy && <span className="lt-busy">...</span>}
+                    {hasFlowchart && <span className="lt-flowchart-indicator" title="Has active flowchart">FC</span>}
+                  </button>
+                );
+              })}
             </div>
 
             <MessagePanel

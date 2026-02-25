@@ -170,6 +170,17 @@ body {
   font-size: 12px;
 }
 
+.lt-flowchart-indicator {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(74, 255, 106, 0.15);
+  color: var(--success);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
 /* Message Panel Styles */
 .message-panel {
   flex: 1;

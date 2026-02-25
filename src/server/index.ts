@@ -14,6 +14,7 @@ import { createLieutenant, processOrder, Lieutenant, LLMClient, OrderContext } f
 import { VisibleUnitInfo, VisibleEnemyInfo } from './agents/input-builder.js';
 import { compileDirectives, applyFlowcharts } from './agents/compiler.js';
 import { createAICommander, generateCommanderOrders, AICommander } from './agents/ai-commander.js';
+import { Flowchart, FlowchartNode, createPersonalityFlowchart } from './runtime/flowchart.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -298,6 +299,21 @@ async function handleMessage(session: GameSession, message: { type: string; data
         session.playerAICommander = null;
       }
 
+      // Apply personality-based default flowcharts for all player lieutenants' troops.
+      // This ensures every lieutenant always has meaningful behavior even without a briefing.
+      // If a briefing is provided (or AI commander issues orders), it will override these.
+      if (session.simulation) {
+        const enemyCenter = { x: scenarioData.width - 50, y: scenarioData.height / 2 };
+        for (const lt of session.lieutenants) {
+          for (const troopId of lt.troopIds) {
+            const runtime = session.simulation.runtimes.get(troopId);
+            if (runtime) {
+              runtime.flowchart = createPersonalityFlowchart(troopId, lt.personality, enemyCenter);
+            }
+          }
+        }
+      }
+
       // Process initial briefings
       if (session.apiKey && session.anthropicClient) {
         const briefingPromises: Promise<void>[] = [];
@@ -324,6 +340,9 @@ async function handleMessage(session: GameSession, message: { type: string; data
       // Send initial state (visibility-filtered)
       sendBattleState(session);
       sendLieutenants(session);
+
+      // Send initial flowcharts so players can see default troop behavior
+      sendAllLieutenantFlowcharts(session);
 
       send(ws, { type: 'battle_ready', data: { gameMode: session.gameMode } });
       break;
@@ -520,16 +539,17 @@ async function handleMessage(session: GameSession, message: { type: string; data
           const compiled = compileDirectives(result.output, lieutenant.troopIds);
           if (session.simulation) {
             applyFlowcharts(compiled, session.simulation.runtimes);
-          }
 
-          // Send updated flowchart
-          send(ws, {
-            type: 'flowchart',
-            data: {
-              lieutenantId,
-              flowcharts: compiled.flowcharts,
-            },
-          });
+            // Send lieutenant-level aggregated flowchart
+            const ltFlowchart = buildLieutenantFlowchart(lieutenantId, lieutenant.troopIds, session.simulation.runtimes);
+            send(ws, {
+              type: 'flowchart',
+              data: {
+                lieutenantId,
+                flowcharts: { [lieutenantId]: ltFlowchart },
+              },
+            });
+          }
         } else {
           send(ws, {
             type: 'message',
@@ -563,6 +583,49 @@ async function handleMessage(session: GameSession, message: { type: string; data
       sendLieutenants(session);
       break;
     }
+  }
+}
+
+// Aggregate per-unit flowcharts into a single lieutenant-level summary flowchart.
+// Deduplicates nodes by ID so the player sees one consolidated view of each lieutenant's logic.
+function buildLieutenantFlowchart(
+  lieutenantId: string,
+  troopIds: string[],
+  runtimes: Map<string, { flowchart: Flowchart }>
+): Flowchart {
+  const seenNodeIds = new Set<string>();
+  const nodes: FlowchartNode[] = [];
+
+  for (const troopId of troopIds) {
+    const runtime = runtimes.get(troopId);
+    if (!runtime) continue;
+    for (const node of runtime.flowchart.nodes) {
+      if (!seenNodeIds.has(node.id)) {
+        seenNodeIds.add(node.id);
+        nodes.push(node);
+      }
+    }
+  }
+
+  return {
+    agentId: lieutenantId,
+    nodes,
+    defaultAction: { type: 'hold' },
+  };
+}
+
+// Send current flowcharts for all player lieutenants
+function sendAllLieutenantFlowcharts(session: GameSession) {
+  if (!session.simulation) return;
+  for (const lt of session.lieutenants) {
+    const flowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation.runtimes);
+    send(session.ws, {
+      type: 'flowchart',
+      data: {
+        lieutenantId: lt.id,
+        flowcharts: { [lt.id]: flowchart },
+      },
+    });
   }
 }
 
@@ -697,6 +760,16 @@ async function processInitialBriefing(session: GameSession, lieutenant: Lieutena
     const compiled = compileDirectives(result.output, lieutenant.troopIds);
     if (session.simulation) {
       applyFlowcharts(compiled, session.simulation.runtimes);
+
+      // Send lieutenant-level flowchart
+      const ltFlowchart = buildLieutenantFlowchart(lieutenant.id, lieutenant.troopIds, session.simulation.runtimes);
+      send(session.ws, {
+        type: 'flowchart',
+        data: {
+          lieutenantId: lieutenant.id,
+          flowcharts: { [lieutenant.id]: ltFlowchart },
+        },
+      });
     }
 
     // Send lieutenant's response as a message
@@ -750,6 +823,16 @@ async function briefTeamLieutenants(session: GameSession, commander: AICommander
         if (ltResult.success && ltResult.output) {
           const compiled = compileDirectives(ltResult.output, lt.troopIds);
           applyFlowcharts(compiled, session.simulation!.runtimes);
+
+          // Send updated lieutenant-level flowchart
+          const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation!.runtimes);
+          send(session.ws, {
+            type: 'flowchart',
+            data: {
+              lieutenantId: lt.id,
+              flowcharts: { [lt.id]: ltFlowchart },
+            },
+          });
         }
       }
     }
@@ -788,6 +871,16 @@ async function runAICommanderCycle(session: GameSession, commander: AICommander,
           const compiled = compileDirectives(ltResult.output, lt.troopIds);
           if (session.simulation) {
             applyFlowcharts(compiled, session.simulation.runtimes);
+
+            // Send updated lieutenant-level flowchart to client
+            const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation.runtimes);
+            send(session.ws, {
+              type: 'flowchart',
+              data: {
+                lieutenantId: lt.id,
+                flowcharts: { [lt.id]: ltFlowchart },
+              },
+            });
           }
         }
       }

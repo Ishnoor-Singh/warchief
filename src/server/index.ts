@@ -1,6 +1,7 @@
 // Warchief Server - WebSocket + HTTP server for the game
 // Serves frontend and handles real-time battle simulation
 
+import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';

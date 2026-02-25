@@ -58,8 +58,8 @@ export function InstructionsScreen({ onBack, onPlay }: Props) {
               <div className="instruction-step">
                 <span className="step-number">2</span>
                 <div>
-                  <h3>Pre-Battle Briefing</h3>
-                  <p>Review your three lieutenants and their personalities. Write initial orders for each — this is your opening strategy. Choose your game mode: command yourself or watch two AI commanders fight.</p>
+                  <h3>The War Room</h3>
+                  <p>Meet your lieutenants in the War Room. Review their personalities, stats, and assigned troops. Have a conversation with each — ask questions, give orders, discuss strategy. They'll respond and prepare their troops accordingly. Choose your game mode: command yourself or watch two AI commanders fight.</p>
                 </div>
               </div>
               <div className="instruction-step">

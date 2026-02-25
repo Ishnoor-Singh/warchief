@@ -81,10 +81,14 @@ function App() {
 
     switch (message.type) {
       case 'connected': {
-        const data = message.data as { models: Model[]; selectedModel: string; gameMode?: GameMode };
+        const data = message.data as { models: Model[]; selectedModel: string; gameMode?: GameMode; hasServerKey?: boolean };
         setModels(data.models);
         setSelectedModel(data.selectedModel);
         if (data.gameMode) setGameMode(data.gameMode);
+        // If server has API key configured, skip setup
+        if (data.hasServerKey) {
+          setApiKeyValid(true);
+        }
         break;
       }
 
@@ -384,13 +388,13 @@ function App() {
 
       {phase === 'landing' ? (
         <LandingScreen
-          onPlay={() => setPhase('setup')}
+          onPlay={() => setPhase(apiKeyValid ? 'pre-battle' : 'setup')}
           onHowToPlay={() => setPhase('instructions')}
         />
       ) : phase === 'instructions' ? (
         <InstructionsScreen
           onBack={() => setPhase('landing')}
-          onPlay={() => setPhase('setup')}
+          onPlay={() => setPhase(apiKeyValid ? 'pre-battle' : 'setup')}
         />
       ) : phase === 'setup' ? (
         <SetupScreen

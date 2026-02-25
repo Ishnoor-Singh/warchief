@@ -76,12 +76,20 @@ const server = createServer(app);
 // Create WebSocket server
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+// Check for server-side API key
+const SERVER_API_KEY = process.env.ANTHROPIC_API_KEY || null;
+let serverAnthropicClient: Anthropic | null = null;
+if (SERVER_API_KEY) {
+  serverAnthropicClient = new Anthropic({ apiKey: SERVER_API_KEY });
+  console.log('Using server-side ANTHROPIC_API_KEY');
+}
+
 wss.on('connection', (ws) => {
   console.log('Client connected');
 
   const session: GameSession = {
     ws,
-    apiKey: null,
+    apiKey: SERVER_API_KEY,
     model: AVAILABLE_MODELS.find(m => m.default)?.id || AVAILABLE_MODELS[0]!.id,
     simulation: null,
     lieutenants: [],
@@ -90,7 +98,7 @@ wss.on('connection', (ws) => {
     playerAICommander: null,
     gameMode: 'human_vs_ai',
     timer: null,
-    anthropicClient: null,
+    anthropicClient: serverAnthropicClient,
     aiCommanderInterval: AI_COMMANDER_INTERVAL,
     speed: 1,
   };
@@ -103,7 +111,8 @@ wss.on('connection', (ws) => {
     data: {
       models: AVAILABLE_MODELS,
       selectedModel: session.model,
-      needsApiKey: true,
+      needsApiKey: !SERVER_API_KEY,
+      hasServerKey: !!SERVER_API_KEY,
       gameMode: session.gameMode,
     },
   });

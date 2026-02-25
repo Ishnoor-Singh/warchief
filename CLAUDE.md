@@ -2,6 +2,8 @@
 
 This file is for Claude Code instances working on Warchief. Read this before touching any code.
 
+**IMPORTANT:** Keep this file and `docs/` updated when you change game mechanics, stats, or formulas. The documentation in `docs/` and `client/src/components/InstructionsScreen.tsx` must always match the code. If you change a number, update it everywhere.
+
 ## What You're Building
 
 A real-time battle strategy game where the player commands an army entirely through natural language. The player talks to LLM-powered lieutenants, who write structured flowchart logic for their troops. The troops execute that logic in a running simulation.
@@ -17,7 +19,7 @@ Player (text) → Lieutenant LLMs → Structured flowchart output → Troop agen
 Three distinct layers:
 1. **Communication layer** — LLM inference, message routing, org graph
 2. **Flowchart runtime** — event system, flowchart compiler, agent execution
-3. **Simulation layer** — 2D physics, combat stats, visibility/fog of war
+3. **Simulation layer** — 2D physics, combat stats, visibility/fog of war, terrain, morale
 
 Keep these layers clean. They should communicate through defined interfaces only.
 
@@ -25,22 +27,43 @@ Keep these layers clean. They should communicate through defined interfaces only
 
 ```
 /client          React frontend
-  /battlefield   Phaser canvas, unit rendering
-  /flowchart-ui  Live flowchart visualization
-  /editor        Monaco-based flowchart editor
-  /comms         Message panel, speech UI
+  /components    All React UI components (battlefield, panels, screens)
+  /types         Client-side TypeScript types
 
-/server
-  /sim           Simulation loop, combat resolution
-  /agents        Lieutenant LLM instances, agent state
+/src/server
+  /sim           Simulation loop, combat resolution, scenarios
+  /agents        Lieutenant LLM instances, AI commander, agent state
   /runtime       Flowchart compiler + event runtime
-  /api           REST + WebSocket endpoints
+  /engine        Core game engine modules:
+    - vec2.ts           Vector math
+    - unit-types.ts     Unit definitions, presets, factories
+    - combat.ts         Base damage, death, squad tracking, win condition
+    - combat-modifiers.ts  Formation modifiers, flanking, charge momentum
+    - morale.ts         Morale routing, panic cascades, recovery
+    - terrain.ts        Terrain features (hill, forest, river), modifiers
+    - formations.ts     Formation slot positioning
+    - movement.ts       Agent movement, pursuit, arrival
+    - spatial.ts        Spatial indexing (Matter.js backed)
+    - conditions.ts     Safe condition evaluation (no eval)
 
-/shared
+/src/shared
   /types         Shared TypeScript types
   /events        Event vocabulary definitions
-  /schemas       Lieutenant output schemas
+
+/docs            Game mechanics documentation (KEEP UPDATED)
+  - combat-mechanics.md   Damage formula, modifiers, application order
+  - morale-and-routing.md Morale system, routing checks, panic cascades
+  - terrain.md            Terrain types, modifiers, combos
+  - unit-stats.md         All unit stats, presets, stat tables
+  - formations.md         Formation types, combat modifiers, tactical tips
 ```
+
+## Documentation Requirements
+
+When you change any game mechanic, stat value, or formula, you MUST update:
+1. The relevant file in `docs/`
+2. `client/src/components/InstructionsScreen.tsx` (public-facing in-game guide)
+3. This file (`CLAUDE.md`) if the change affects architecture or high-level design
 
 ## The Event System
 
@@ -50,11 +73,14 @@ This is the core primitive. Every troop agent runs on this. Lieutenants write in
 ```ts
 enemy_spotted: { enemyId: string, position: Vec2, distance: number }
 under_attack: { attackerId: string, damage: number }
-flanked: { direction: 'left' | 'right' | 'rear' }
+flanked: { direction: 'left' | 'right' | 'rear' }  // fires on side/rear attacks
 message: { from: string, content: string }
 ally_down: { unitId: string, position: Vec2 }
 casualty_threshold: { lossPercent: number }
 order_received: { order: string, from: string }
+tick: { tick: number }
+arrived: { position: Vec2 }
+no_enemies_visible: {}
 ```
 
 ### Actions (outputs from an agent)
@@ -72,79 +98,111 @@ emit('alert', message: string)
 ### Formation Types
 `line | wedge | scatter | pincer | defensive_circle | column`
 
+## Simulation Loop
+
+Runs at 10 ticks/second. Each tick:
+1. Track moving agents (for charge momentum detection)
+2. Update visibility and queue `enemy_spotted` / `no_enemies_visible` events (every 10 ticks)
+3. Process flowchart events for each agent (skip routing units)
+4. Maintain formations (reposition non-engaged troops around their lieutenant)
+5. Move agents toward targets (with terrain speed modifiers)
+6. Separate overlapping units
+7. Resolve combat (with formation, flanking, terrain, and charge modifiers)
+8. Check morale and trigger routing
+9. Recover morale for out-of-combat units
+10. Check win condition
+11. Fire callbacks
+
+LLM calls are async and non-blocking. Lieutenants continue running their current flowchart until new output arrives.
+
+## Combat System
+
+### Base Damage
+```
+damage = BASE_DAMAGE (10) × (attacker_combat / defender_combat) × (1 ± 20% variance)
+```
+Minimum 1 damage. See `docs/combat-mechanics.md` for full details.
+
+### Modifier Application Order
+1. Base damage (stat ratio + variance)
+2. Formation attack/defense multipliers
+3. Flanking multiplier (1.0x front, 1.3x side, 1.6x rear)
+4. Terrain defense multiplier (defender's position)
+5. Charge bonus (additive, first hit only)
+6. Minimum 1 damage floor
+
+### Formation Combat Modifiers
+| Formation | Attack | Defense |
+|-----------|--------|---------|
+| line | 1.0x | 1.0x |
+| wedge | 1.3x | 0.8x |
+| defensive_circle | 0.7x | 1.4x |
+| scatter | 0.85x | 1.15x |
+| pincer | 1.2x | 0.9x |
+| column | 0.6x | 0.7x |
+
+### Terrain Modifiers
+| Terrain | Defense | Speed | Visibility | Concealment |
+|---------|---------|-------|------------|-------------|
+| hill | 0.75x (less dmg) | 0.85x | +20 | 1.0x |
+| forest | 0.80x (less dmg) | 0.70x | -10 | 0.5x |
+| river | 1.40x (MORE dmg) | 0.45x | 0 | 1.0x |
+
+### Morale & Routing
+- Morale: 0-100, starts at 100
+- Ally death within 50 units: -5 morale
+- Routing panic within 40 units: -8 morale
+- Routing check when morale < 40: `chance = (1 - morale/40) × (1 - courage/12)`
+- Routing units flee toward spawn, spread panic, ignore flowchart
+- Recovery: +0.5/tick when out of combat. Routing stops at morale 50.
+
+## Stats
+
+### Troop stats
+- `combat` (1-10): attack/defense effectiveness
+- `speed`: movement rate in units/tick. Affected by terrain.
+- `courage` (1-10): resistance to routing when morale drops
+- `discipline` (1-10): how precisely they execute flowchart logic
+
+### Lieutenant stats
+- `initiative` (1-10): likelihood of acting without explicit orders
+- `discipline` (1-10): how literally they interpret orders
+- `communication` (1-10): quality/frequency of reports upward
+- `personality`: aggressive | cautious | disciplined | impulsive
+
+### Unit Presets
+| Preset | Combat | Speed | Courage | Discipline |
+|--------|--------|-------|---------|------------|
+| infantry | 5 | 2 | 5 | 5 |
+| scout | 3 | 4 | 4 | 4 |
+| vanguard | 8 | 1.5 | 7 | 6 |
+| archer | 4 | 2 | 4 | 8 |
+| berserker | 9 | 3 | 3 | 2 |
+| guardian | 6 | 1.5 | 9 | 8 |
+| militia | 3 | 2 | 3 | 3 |
+
+## Visibility
+
+Each agent has a visibility radius. Troops: 60 units. Lieutenants: 150 units.
+
+Terrain modifies visibility:
+- Hills: +20 bonus to viewer
+- Forests: 0.5x concealment (harder to spot units in forests)
+
+The player's battlefield view is an aggregate of all lieutenant visibility zones — not omniscient.
+
 ## Lieutenant Output Schema
 
 Lieutenants output structured JSON only. This is what gets compiled into the runtime. Validate all output before compiling.
 
 ```ts
 type LieutenantOutput = {
-  directives: FlowchartDirective[]   // for troops
-  self_directives?: FlowchartDirective[]  // lieutenant's own behavior
-  message_up?: string                // report to commander
-  message_peers?: { to: string, content: string }[]  // peer comms
-}
-
-type FlowchartDirective = {
-  unit: string | 'all' | 'squad_*'
-  nodes: FlowchartNode[]
-}
-
-type FlowchartNode = {
-  id: string
-  on: string           // event name
-  condition?: string   // simple expression, e.g. "distance < 50"
-  action: string       // action name
-  params?: object
-  next?: string        // node id to chain to
-  else?: string        // node id if condition fails
+  directives: FlowchartDirective[]
+  self_directives?: FlowchartDirective[]
+  message_up?: string
+  message_peers?: { to: string, content: string }[]
 }
 ```
-
-## Lieutenant System Prompt Structure
-
-Each lieutenant instance gets a system prompt with:
-- Identity (name, rank, personality trait — one of: aggressive, cautious, disciplined, impulsive)
-- Stats (initiative 1-10, discipline 1-10, communication 1-10)
-- Current orders (from commander)
-- Visible units under command (their positions, health, morale)
-- Peer lieutenants they're authorized to contact
-- Terrain context (brief description)
-- Last N messages received
-
-They must respond with valid `LieutenantOutput` JSON. Include a system prompt section that specifies this and shows the schema explicitly. Always validate.
-
-## Simulation Loop
-
-Runs at 10 ticks/second. Each tick:
-1. Process all pending events for each agent
-2. Execute flowchart transitions
-3. Resolve combat (stat-based)
-4. Update visibility per agent
-5. Trigger LLM calls for any lieutenant with new messages (async, non-blocking)
-6. Emit state delta to frontend via WebSocket
-
-LLM calls are async and non-blocking. Lieutenants continue running their current flowchart until new output arrives.
-
-## Stats
-
-### Troop stats
-- `combat`: attack/defense effectiveness (1-10)
-- `speed`: movement rate
-- `courage`: threshold before breaking formation (1-10)
-- `discipline`: how precisely they execute flowchart logic (1-10)
-
-### Lieutenant stats
-- `initiative`: likelihood of acting without explicit orders
-- `discipline`: how literally they interpret orders
-- `communication`: quality/frequency of reports upward
-
-Stats modulate behavior — they do not override flowchart logic directly. A `courage: 3` unit might break from `hold()` if `under_attack` triggers repeatedly. Model this as a probability check, not a hard override.
-
-## Visibility
-
-Each agent has a visibility radius. Troops report to their lieutenant. Lieutenants aggregate and report to the player. The player's battlefield view is an aggregate of all lieutenant visibility zones — not omniscient.
-
-This is important. Do not give the player full map visibility.
 
 ## Key Design Rules
 
@@ -153,6 +211,9 @@ This is important. Do not give the player full map visibility.
 3. **Flowcharts must have fallbacks.** Any unhandled event should fall to a default behavior (hold position, report up).
 4. **Keep LLM calls minimal.** Only call lieutenant LLMs when they have new input. Troops never call LLMs.
 5. **Fail gracefully.** Malformed lieutenant output → validate, reject, request retry with error context. Don't crash the sim.
+6. **Stats are meaningful.** Every stat affects gameplay. Courage prevents routing, combat affects damage, speed affects charge bonus and movement.
+7. **Terrain matters.** Hills, forests, and rivers create tactical depth. Scenarios should use terrain features.
+8. **Morale creates drama.** Routing cascades should be possible — they create memorable moments and reward good positioning.
 
 ## What Not To Build Yet
 
@@ -160,4 +221,4 @@ This is important. Do not give the player full map visibility.
 - Economy or resource management
 - Unit production or base building
 - More than 3 lieutenants, ~100 units total
-- Procedural terrain (use fixed maps for MVP)
+- Procedural terrain (use fixed map scenarios for MVP)

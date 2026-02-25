@@ -27,6 +27,13 @@ export interface VisibilityZone {
   radius: number;
 }
 
+export interface TerrainFeature {
+  id: string;
+  type: 'hill' | 'forest' | 'river';
+  position: Vec2;
+  size: Vec2;
+}
+
 export interface BattleState {
   tick: number;
   agents: AgentState[];
@@ -36,6 +43,7 @@ export interface BattleState {
   winner: Team | null;
   visibilityZones?: VisibilityZone[];
   activeNodes?: Record<string, string | null>;
+  terrain?: TerrainFeature[];
 }
 
 export interface LieutenantStats {

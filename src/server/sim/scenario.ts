@@ -29,12 +29,14 @@ import {
   createLieutenant,
   createSquad,
 } from '../engine/index.js';
+import { createTerrainMap, type TerrainMap, type TerrainFeature } from '../engine/terrain.js';
 
 export interface ScenarioSetup {
   agents: AgentState[];
   flowcharts: Flowchart[];
   width: number;
   height: number;
+  terrain: TerrainMap;
 }
 
 /**
@@ -170,7 +172,10 @@ export function createBasicScenario(): ScenarioSetup {
   flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_1', { x: 100, y: 113 }, 'aggressive'));
   flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_2', { x: 100, y: 225 }, 'disciplined'));
 
-  return { agents, flowcharts, width, height };
+  // Basic scenario: flat open field, no terrain features
+  const terrain = createTerrainMap();
+
+  return { agents, flowcharts, width, height, terrain };
 }
 
 /**
@@ -303,5 +308,160 @@ export function createAssaultScenario(): ScenarioSetup {
   flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_1', { x: 430, y: 115 }, 'disciplined'));
   flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_2', { x: 430, y: 185 }, 'cautious'));
 
-  return { agents, flowcharts, width, height };
+  // Assault scenario: defenders on a hill, attacker crosses open ground
+  const terrain = createTerrainMap([
+    { id: 'hill_defense', type: 'hill', position: { x: 370, y: 80 }, size: { x: 80, y: 140 } },
+  ]);
+
+  return { agents, flowcharts, width, height, terrain };
+}
+
+/**
+ * River Crossing scenario: Player must cross a river to engage defenders.
+ *
+ * - River runs vertically through the center of the map
+ * - Enemy has a hilltop position on the far side
+ * - Forests on the flanks provide concealment for flanking maneuvers
+ * - Player outnumbers enemy but must cross the river under fire
+ *
+ * Terrain:
+ * ```
+ *   [Forest]          [River]         [Hill]
+ *   (top flank)        |||           (enemy pos)
+ *                      |||
+ *   Player →           |||       ← Enemy
+ *                      |||
+ *   [Forest]           |||
+ *   (bottom flank)
+ * ```
+ */
+export function createRiverCrossingScenario(): ScenarioSetup {
+  const width = 500;
+  const height = 350;
+
+  const agents: AgentState[] = [];
+  const flowcharts: Flowchart[] = [];
+
+  // ── Terrain Features ────────────────────────────────────────────────────
+  const terrain = createTerrainMap([
+    // Central river (vertical band)
+    { id: 'river_main', type: 'river', position: { x: 220, y: 12 }, size: { x: 30, y: 326 } },
+    // Enemy hilltop position
+    { id: 'hill_enemy', type: 'hill', position: { x: 350, y: 100 }, size: { x: 80, y: 150 } },
+    // Flanking forests
+    { id: 'forest_north', type: 'forest', position: { x: 150, y: 12 }, size: { x: 60, y: 70 } },
+    { id: 'forest_south', type: 'forest', position: { x: 150, y: 268 }, size: { x: 60, y: 70 } },
+  ]);
+
+  // ── Player Army (left side, attacking across river) ───────────────────
+
+  const playerSquad1 = createSquad('p_s1', 12, {
+    team: 'player',
+    centerPosition: { x: 80, y: 100 },
+    lieutenantId: 'lt_alpha',
+    squadId: 'squad_1',
+    preset: 'infantry',
+  });
+
+  const playerSquad2 = createSquad('p_s2', 12, {
+    team: 'player',
+    centerPosition: { x: 80, y: 175 },
+    lieutenantId: 'lt_bravo',
+    squadId: 'squad_2',
+    preset: 'infantry',
+  });
+
+  const playerSquad3 = createSquad('p_s3', 8, {
+    team: 'player',
+    centerPosition: { x: 80, y: 250 },
+    lieutenantId: 'lt_charlie',
+    squadId: 'squad_3',
+    preset: 'scout',
+  });
+
+  const ltAlpha = createLieutenant({
+    id: 'lt_alpha',
+    team: 'player',
+    position: { x: 50, y: 100 },
+    name: 'Lt. Alpha',
+    preset: 'aggressive',
+    troopIds: playerSquad1.map(t => t.id),
+  });
+
+  const ltBravo = createLieutenant({
+    id: 'lt_bravo',
+    team: 'player',
+    position: { x: 50, y: 175 },
+    name: 'Lt. Bravo',
+    preset: 'disciplined',
+    troopIds: playerSquad2.map(t => t.id),
+  });
+
+  const ltCharlie = createLieutenant({
+    id: 'lt_charlie',
+    team: 'player',
+    position: { x: 50, y: 250 },
+    name: 'Lt. Charlie',
+    preset: 'impulsive',
+    troopIds: playerSquad3.map(t => t.id),
+  });
+
+  agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3, ltAlpha, ltBravo, ltCharlie);
+
+  // ── Enemy Army (right side, defending hill behind river) ──────────────
+
+  const enemySquad1 = createSquad('e_s1', 8, {
+    team: 'enemy',
+    centerPosition: { x: 380, y: 140 },
+    lieutenantId: 'lt_enemy_1',
+    squadId: 'enemy_squad_1',
+    preset: 'guardian',
+  });
+
+  const enemySquad2 = createSquad('e_s2', 8, {
+    team: 'enemy',
+    centerPosition: { x: 380, y: 210 },
+    lieutenantId: 'lt_enemy_2',
+    squadId: 'enemy_squad_2',
+    preset: 'vanguard',
+  });
+
+  const ltEnemy1 = createLieutenant({
+    id: 'lt_enemy_1',
+    team: 'enemy',
+    position: { x: 420, y: 140 },
+    name: 'Enemy Commander 1',
+    preset: 'cautious',
+    troopIds: enemySquad1.map(t => t.id),
+  });
+
+  const ltEnemy2 = createLieutenant({
+    id: 'lt_enemy_2',
+    team: 'enemy',
+    position: { x: 420, y: 210 },
+    name: 'Enemy Commander 2',
+    preset: 'disciplined',
+    troopIds: enemySquad2.map(t => t.id),
+  });
+
+  agents.push(...enemySquad1, ...enemySquad2, ltEnemy1, ltEnemy2);
+
+  // ── Flowcharts ──────────────────────────────────────────────────────────
+
+  for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {
+    flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 380, y: 175 }));
+  }
+
+  // Enemy holds position on the hill
+  for (const agent of [...enemySquad1, ...enemySquad2]) {
+    flowcharts.push(createHoldPositionFlowchart(agent.id));
+  }
+
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_alpha', { x: 350, y: 100 }, 'aggressive'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_bravo', { x: 350, y: 175 }, 'disciplined'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_charlie', { x: 350, y: 250 }, 'impulsive'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_1', { x: 420, y: 140 }, 'cautious'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_2', { x: 420, y: 210 }, 'disciplined'));
+
+  return { agents, flowcharts, width, height, terrain };
 }

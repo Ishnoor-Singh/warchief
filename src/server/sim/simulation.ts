@@ -69,6 +69,22 @@ import {
   isLieutenant,
 } from '../engine/index.js';
 import type { LieutenantAgent } from '../engine/index.js';
+import {
+  getFormationModifiers,
+  calculateFlankingMultiplier,
+  calculateChargeBonusDamage,
+} from '../engine/combat-modifiers.js';
+import {
+  shouldRout,
+  applyRoutingPanic,
+  checkMoraleRecovery,
+} from '../engine/morale.js';
+import {
+  createTerrainMap,
+  getTerrainModifiers,
+  type TerrainMap,
+} from '../engine/terrain.js';
+import type { FlankedEvent } from '../../shared/events/index.js';
 
 const TICK_RATE = 10;  // ticks per second
 const TICK_MS = 1000 / TICK_RATE;
@@ -114,6 +130,12 @@ export interface SimulationState {
   onBattleEnd?: (winner: Team) => void;
   pendingBattleEvents: BattleEvent[];
   activeEngagements: Set<string>;
+  /** Terrain map for the battle (hills, forests, rivers). */
+  terrain: TerrainMap;
+  /** Tracks which agents were moving last tick (for charge bonus). */
+  wasMovingLastTick: Set<string>;
+  /** Tracks agents that have already received their charge bonus (one-time). */
+  chargeApplied: Set<string>;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -152,6 +174,9 @@ export function createSimulation(
     callbacks,
     pendingBattleEvents: [],
     activeEngagements: new Set(),
+    terrain: createTerrainMap(),
+    wasMovingLastTick: new Set(),
+    chargeApplied: new Set(),
   };
 }
 
@@ -168,10 +193,11 @@ export function simulationTick(state: SimulationState): void {
   // 1. Update visibility and queue enemy_spotted events
   updateVisibility(state);
 
-  // 2. Process flowchart events for each agent
+  // 2. Process flowchart events for each agent (skip routing units)
   for (const [agentId, runtime] of runtimes) {
     const agent = battle.agents.get(agentId);
     if (!agent || !agent.alive) continue;
+    if (agent.currentAction === 'routing') continue; // routing overrides flowchart
 
     // Queue tick event
     queueEvent(runtime, { type: 'tick', tick: battle.tick });
@@ -189,19 +215,28 @@ export function simulationTick(state: SimulationState): void {
   //    lieutenant's current position so formations move as a unit.
   maintainFormations(state);
 
-  // 4. Move agents toward their targets (using engine movement)
+  // 4. Move agents toward their targets (with terrain speed modifiers)
   updateMovement(state);
 
   // 5. Separate overlapping units — prevent units from stacking on same spot.
   separateUnits(state);
 
-  // 6. Resolve combat (using engine combat)
+  // 6. Resolve combat (with formation, flanking, terrain, and charge modifiers)
   resolveCombat(state);
 
-  // 7. Check win condition (using engine win condition)
+  // 7. Check morale and trigger routing
+  checkMoraleRouting(state);
+
+  // 8. Recover morale for out-of-combat units
+  recoverMorale(state);
+
+  // 9. Check win condition (using engine win condition)
   checkWinCondition(state);
 
-  // 8. Callback
+  // 10. Track which agents are moving this tick (for charge bonus next tick)
+  trackMovingAgents(state);
+
+  // 11. Callback
   state.onTick?.(state);
 }
 
@@ -386,9 +421,10 @@ function maintainFormations(state: SimulationState): void {
   for (const agent of battle.agents.values()) {
     if (!agent.alive || !isTroop(agent)) continue;
 
-    // Don't override active engagement or fallback
+    // Don't override active engagement, fallback, or routing
     if (agent.currentAction === 'engaging') continue;
     if (agent.currentAction === 'falling_back') continue;
+    if (agent.currentAction === 'routing') continue;
     if (agent.targetId) continue;  // actively pursuing an enemy
 
     const lt = battle.agents.get(agent.lieutenantId);
@@ -460,16 +496,37 @@ function separateUnits(state: SimulationState): void {
 
 // ─── Movement ───────────────────────────────────────────────────────────────
 
+// ─── Charge Tracking ─────────────────────────────────────────────────────────
+
+/** Record which agents are currently moving (for charge bonus on first combat).
+ *  Only tracks 'moving' units — units already 'engaging' are in combat, not charging. */
+function trackMovingAgents(state: SimulationState): void {
+  state.wasMovingLastTick.clear();
+  for (const agent of state.battle.agents.values()) {
+    if (!agent.alive) continue;
+    if (agent.currentAction === 'moving') {
+      if (agent.targetPosition || agent.targetId) {
+        state.wasMovingLastTick.add(agent.id);
+      }
+    }
+  }
+}
+
 /**
  * Update agent positions based on their targets.
  * Uses engine's moveToward and getSpeed for reliable movement math.
+ * Applies terrain speed modifiers when units are in terrain features.
  * All positions are clamped to map bounds after every move.
  */
 function updateMovement(state: SimulationState): void {
   for (const agent of state.battle.agents.values()) {
     if (!agent.alive) continue;
 
-    const speed = getSpeed(agent);
+    let speed = getSpeed(agent);
+
+    // Apply terrain speed modifier
+    const terrainMods = getTerrainModifiers(agent.position, state.terrain);
+    speed *= terrainMods.speedMultiplier;
 
     let targetPos: Vec2 | null = null;
     let isChasing = false;
@@ -494,7 +551,9 @@ function updateMovement(state: SimulationState): void {
           // Snap to target and clamp to map bounds
           agent.position = clampToMap(vecClone(targetPos), state.battle);
           agent.targetPosition = null;
-          agent.currentAction = 'holding';
+          if (agent.currentAction !== 'routing') {
+            agent.currentAction = 'holding';
+          }
 
           const runtime = state.runtimes.get(agent.id);
           if (runtime) {
@@ -513,16 +572,28 @@ function updateMovement(state: SimulationState): void {
 
 /**
  * Resolve combat between agents in range.
- * Uses engine's calculateDamage, applyDamage, and applyMoraleLoss.
+ *
+ * Enhanced with:
+ * - Formation combat modifiers (wedge = more attack, circle = more defense, etc.)
+ * - Flanking detection (side/rear attacks deal bonus damage)
+ * - Terrain modifiers (hills = less damage taken, rivers = more)
+ * - Charge momentum (moving units deal bonus first-hit damage)
  */
 function resolveCombat(state: SimulationState): void {
   const agents = Array.from(state.battle.agents.values());
   const combatPairs = findCombatPairs(agents);
 
+  // Track which agents are in combat this tick (for morale recovery check)
+  const inCombatThisTick = new Set<string>();
+
   for (const [a, b] of combatPairs) {
+    inCombatThisTick.add(a.id);
+    inCombatThisTick.add(b.id);
+
     // Emit engagement event for new combat pairs
     const pairKey = [a.id, b.id].sort().join(':');
-    if (!state.activeEngagements.has(pairKey)) {
+    const isNewEngagement = !state.activeEngagements.has(pairKey);
+    if (isNewEngagement) {
       state.activeEngagements.add(pairKey);
       const aTeamLabel = a.team === 'player' ? 'Your' : 'Enemy';
       state.pendingBattleEvents.push({
@@ -534,13 +605,87 @@ function resolveCombat(state: SimulationState): void {
       });
     }
 
-    // Both sides deal damage using engine damage calculation
+    // Calculate base damage for both sides
     const resultA = engineCalculateDamage(a, b);
     const resultB = engineCalculateDamage(b, a);
+
+    // Apply formation modifiers
+    const aFormMods = getFormationModifiers(a.formation);
+    const bFormMods = getFormationModifiers(b.formation);
+
+    // A attacks B: A's attack modifier * B's defense modifier
+    resultA.damage = Math.max(1, Math.round(resultA.damage * aFormMods.attackMultiplier / bFormMods.defenseMultiplier));
+    // B attacks A: B's attack modifier * A's defense modifier
+    resultB.damage = Math.max(1, Math.round(resultB.damage * bFormMods.attackMultiplier / aFormMods.defenseMultiplier));
+
+    // Apply flanking modifiers
+    const aFacing = getTeamFacing(a.team);
+    const bFacing = getTeamFacing(b.team);
+
+    // B is attacking A — check if B is flanking A
+    const flankOnA = calculateFlankingMultiplier(b.position, a.position, aFacing);
+    resultB.damage = Math.max(1, Math.round(resultB.damage * flankOnA.multiplier));
+
+    // A is attacking B — check if A is flanking B
+    const flankOnB = calculateFlankingMultiplier(a.position, b.position, bFacing);
+    resultA.damage = Math.max(1, Math.round(resultA.damage * flankOnB.multiplier));
+
+    // Fire flanked events for side/rear attacks
+    if (flankOnA.direction !== 'front') {
+      const runtimeA = state.runtimes.get(a.id);
+      if (runtimeA) {
+        const flankedDir = flankOnA.direction === 'rear' ? 'rear' : (
+          // Determine left/right from cross product
+          b.position.y > a.position.y ? 'right' : 'left'
+        );
+        const flankedEvent: FlankedEvent = { type: 'flanked', direction: flankedDir as 'left' | 'right' | 'rear' };
+        queueEvent(runtimeA, flankedEvent);
+      }
+    }
+    if (flankOnB.direction !== 'front') {
+      const runtimeB = state.runtimes.get(b.id);
+      if (runtimeB) {
+        const flankedDir = flankOnB.direction === 'rear' ? 'rear' : (
+          a.position.y > b.position.y ? 'right' : 'left'
+        );
+        const flankedEvent: FlankedEvent = { type: 'flanked', direction: flankedDir as 'left' | 'right' | 'rear' };
+        queueEvent(runtimeB, flankedEvent);
+      }
+    }
+
+    // Apply terrain defense modifiers
+    const aTerrainMods = getTerrainModifiers(a.position, state.terrain);
+    const bTerrainMods = getTerrainModifiers(b.position, state.terrain);
+
+    // Defender's terrain modifies incoming damage
+    resultA.damage = Math.max(1, Math.round(resultA.damage * bTerrainMods.defenseMultiplier));
+    resultB.damage = Math.max(1, Math.round(resultB.damage * aTerrainMods.defenseMultiplier));
+
+    // Apply charge momentum (first hit only)
+    if (isNewEngagement) {
+      const aWasMoving = state.wasMovingLastTick.has(a.id) && !state.chargeApplied.has(a.id);
+      const bWasMoving = state.wasMovingLastTick.has(b.id) && !state.chargeApplied.has(b.id);
+
+      if (aWasMoving) {
+        const aSpeed = getSpeed(a);
+        const chargeBonus = calculateChargeBonusDamage(resultA.damage, true, aSpeed);
+        resultA.damage += chargeBonus;
+        state.chargeApplied.add(a.id);
+      }
+      if (bWasMoving) {
+        const bSpeed = getSpeed(b);
+        const chargeBonus = calculateChargeBonusDamage(resultB.damage, true, bSpeed);
+        resultB.damage += chargeBonus;
+        state.chargeApplied.add(b.id);
+      }
+    }
 
     applySimDamage(state, b, resultA);
     applySimDamage(state, a, resultB);
   }
+
+  // Store in-combat set on state for morale recovery check
+  (state as any)._inCombatThisTick = inCombatThisTick;
 
   // Clean up engagement tracking for pairs no longer in combat
   for (const key of state.activeEngagements) {
@@ -550,6 +695,9 @@ function resolveCombat(state: SimulationState): void {
     if (!agentA?.alive || !agentB?.alive ||
         !isWithinRange(agentA.position, agentB.position, COMBAT_RANGE * 1.5)) {
       state.activeEngagements.delete(key);
+      // Clear charge tracking when combat ends
+      state.chargeApplied.delete(idA!);
+      state.chargeApplied.delete(idB!);
     }
   }
 }
@@ -657,6 +805,58 @@ function applySimDamage(state: SimulationState, agent: AgentState, result: Comba
   }
 }
 
+// ─── Morale Routing ──────────────────────────────────────────────────────────
+
+/** Check morale for all troops and trigger routing if needed. */
+function checkMoraleRouting(state: SimulationState): void {
+  for (const agent of state.battle.agents.values()) {
+    if (!agent.alive || !isTroop(agent)) continue;
+    if (agent.currentAction === 'routing') continue; // already routing
+
+    const courage = agent.stats.courage;
+    if (shouldRout(agent.morale, courage)) {
+      // Unit routs — override flowchart, flee toward spawn
+      agent.currentAction = 'routing';
+      agent.targetId = null;
+
+      // Flee toward spawn side (player → west, enemy → east)
+      const fleeX = agent.team === 'player' ? BOUNDARY_MARGIN : state.battle.width - BOUNDARY_MARGIN;
+      agent.targetPosition = clampToMap({ x: fleeX, y: agent.position.y }, state.battle);
+
+      // Emit retreat battle event
+      const teamLabel = agent.team === 'player' ? 'Your' : 'Enemy';
+      state.pendingBattleEvents.push({
+        type: 'retreat',
+        tick: state.battle.tick,
+        team: agent.team,
+        message: `${teamLabel} troop is routing at (${Math.round(agent.position.x)}, ${Math.round(agent.position.y)})!`,
+        position: vecClone(agent.position),
+      });
+
+      // Spread panic to nearby allies
+      applyRoutingPanic(agent, state.battle.agents.values());
+    }
+  }
+}
+
+/** Recover morale for units not in combat. */
+function recoverMorale(state: SimulationState): void {
+  const inCombat: Set<string> = (state as any)._inCombatThisTick || new Set();
+
+  for (const agent of state.battle.agents.values()) {
+    if (!agent.alive) continue;
+
+    const isInCombat = inCombat.has(agent.id);
+    checkMoraleRecovery(agent, isInCombat);
+
+    // If routing unit's morale recovers above rout threshold, stop routing
+    if (agent.currentAction === 'routing' && agent.morale >= 50) {
+      agent.currentAction = 'holding';
+      agent.targetPosition = null;
+    }
+  }
+}
+
 // ─── Win Condition ──────────────────────────────────────────────────────────
 
 /** Check if battle is over using engine win condition. */
@@ -740,6 +940,14 @@ export interface VisibilityZone {
   radius: number;
 }
 
+/** Serialized terrain feature for the client. */
+export interface ClientTerrainFeature {
+  id: string;
+  type: string;
+  position: Vec2;
+  size: Vec2;
+}
+
 /** Filtered state for a specific team (fog of war). */
 export interface FilteredBattleState {
   tick: number;
@@ -757,6 +965,7 @@ export interface FilteredBattleState {
     lieutenantId: string | null;
   }>;
   visibilityZones: VisibilityZone[];
+  terrain: ClientTerrainFeature[];
   width: number;
   height: number;
   running: boolean;
@@ -808,6 +1017,12 @@ export function getFilteredStateForTeam(state: SimulationState, team: Team): Fil
       lieutenantId: a.lieutenantId,
     })),
     visibilityZones,
+    terrain: state.terrain.features.map(f => ({
+      id: f.id,
+      type: f.type,
+      position: { x: f.position.x, y: f.position.y },
+      size: { x: f.size.x, y: f.size.y },
+    })),
     width: state.battle.width,
     height: state.battle.height,
     running: state.battle.running,

@@ -95,6 +95,7 @@ export type { SquadCasualties, TeamStrength } from './combat.js';
 export {
   FORMATION_SPACING,
   FORMATION_FORWARD_OFFSET,
+  DEFAULT_FACING,
   computeFormationSlot,
   computeFormationPositions,
 } from './formations.js';

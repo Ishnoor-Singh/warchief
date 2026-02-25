@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
 
-import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, SimulationState, distance, BattleEvent } from './sim/simulation.js';
+import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, applyInitialFormations, SimulationState, distance, BattleEvent } from './sim/simulation.js';
 import { createBasicScenario, createAssaultScenario } from './sim/scenario.js';
 import { createLieutenant, processOrder, Lieutenant, LLMClient, OrderContext } from './agents/lieutenant.js';
 import { VisibleUnitInfo, VisibleEnemyInfo } from './agents/input-builder.js';
@@ -348,9 +348,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
         }),
       ];
 
-      // Apply personality-based default flowcharts for all player lieutenants' troops
-      const enemyCenter = { x: scenarioData.width - 50, y: scenarioData.height / 2 };
+      // Apply personality-based default flowcharts for all player lieutenants' troops.
+      // Advance target is on the enemy side (right half of map).
       for (const lt of session.lieutenants) {
+        const ltAgent = session.simulation.battle.agents.get(lt.id);
+        const enemyCenter = { x: scenarioData.width - 60, y: ltAgent?.position.y ?? scenarioData.height / 2 };
         for (const troopId of lt.troopIds) {
           const runtime = session.simulation.runtimes.get(troopId);
           if (runtime) {
@@ -599,9 +601,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
           }),
         ];
 
-        // Apply personality-based default flowcharts
-        const enemyCenter = { x: 350, y: 150 };
+        // Apply personality-based default flowcharts.
+        // Advance target is on the enemy side (right half of map).
         for (const lt of session.lieutenants) {
+          const ltAgent = session.simulation.battle.agents.get(lt.id);
+          const enemyCenter = { x: session.simulation.battle.width - 60, y: ltAgent?.position.y ?? 150 };
           for (const troopId of lt.troopIds) {
             const runtime = session.simulation.runtimes.get(troopId);
             if (runtime) {
@@ -669,6 +673,10 @@ async function handleMessage(session: GameSession, message: { type: string; data
         send(ws, { type: 'error', data: { message: 'No battle initialized' } });
         return;
       }
+
+      // Teleport troops into their formation slots before the battle starts,
+      // so all briefed formations are immediately visible at tick 0.
+      applyInitialFormations(session.simulation);
 
       session.simulation.battle.running = true;
       session.timer = createBattleInterval(session);
@@ -844,7 +852,8 @@ async function handleMessage(session: GameSession, message: { type: string; data
 
       // If personality changed, recreate the default flowchart for all troops
       if (personalityChanged && session.simulation) {
-        const enemyCenter = { x: session.simulation.battle.width - 50, y: session.simulation.battle.height / 2 };
+        const ltAgent = session.simulation.battle.agents.get(lt.id);
+        const enemyCenter = { x: session.simulation.battle.width - 60, y: ltAgent?.position.y ?? session.simulation.battle.height / 2 };
         for (const troopId of lt.troopIds) {
           const runtime = session.simulation.runtimes.get(troopId);
           if (runtime) {

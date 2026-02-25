@@ -129,11 +129,15 @@ export function updateAllMovement(
  *
  * Finds all alive troops under the same lieutenant, determines
  * this troop's slot index, and sets its target position accordingly.
+ *
+ * @param facing - The world-space forward direction for the formation.
+ *   Player team uses { x: 1, y: 0 } (east); enemy uses { x: -1, y: 0 } (west).
  */
 export function repositionInFormation(
   agent: AgentState,
   ltPosition: Vec2,
   allAgents: Map<string, AgentState>,
+  facing?: Vec2,
 ): void {
   if (!isTroop(agent)) return;
 
@@ -145,7 +149,7 @@ export function repositionInFormation(
   const index = teammates.findIndex(a => a.id === agent.id);
   if (index === -1) return;
 
-  const pos = computeFormationSlot(agent.formation, ltPosition, index, teammates.length);
+  const pos = computeFormationSlot(agent.formation, ltPosition, index, teammates.length, undefined, facing);
   agent.targetPosition = pos;
   agent.currentAction = 'moving';
   agent.targetId = null;

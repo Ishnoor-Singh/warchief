@@ -24,10 +24,21 @@
  * - **pincer**: Two flanking groups on left and right.
  *   Good for enveloping an enemy position.
  *
+ * ## Facing Direction
+ *
+ * All formations are computed relative to a `facing` direction — the
+ * world-space vector pointing "forward" (toward the enemy). This allows
+ * formations to be oriented correctly for any battle layout.
+ *
+ * Default facing is south (+y), matching the demo playground.
+ * In the game simulation, pass team-appropriate facing:
+ *   - Player team: { x: 1, y: 0 } (east, toward right side of map)
+ *   - Enemy team:  { x: -1, y: 0 } (west, toward left side of map)
+ *
  * ## Spacing
  *
  * Default spacing between units is 15 world units.
- * Formations offset troops 20-30 units forward of the lieutenant.
+ * Formations offset troops 30 units forward of the lieutenant.
  */
 
 import type { Vec2, FormationType } from '../../shared/types/index.js';
@@ -38,6 +49,29 @@ export const FORMATION_SPACING = 15;
 /** Forward offset from lieutenant to first row of troops. */
 export const FORMATION_FORWARD_OFFSET = 30;
 
+/** Default facing direction (south = +y). Used by the demo playground. */
+export const DEFAULT_FACING: Readonly<Vec2> = Object.freeze({ x: 0, y: 1 });
+
+/**
+ * Apply a facing direction to transform a local formation offset to world space.
+ *
+ * In canonical (local) space: forward = +y, right = +x.
+ * The facing parameter specifies the desired world-space forward direction.
+ *
+ * Transforms:
+ *   local_x (right)   → world right = { x: facing.y, y: -facing.x }
+ *   local_y (forward) → world forward = facing
+ */
+function applyFacing(center: Vec2, localOffset: Vec2, facing: Vec2): Vec2 {
+  // right = 90° clockwise from facing
+  const rightX = facing.y;
+  const rightY = -facing.x;
+  return {
+    x: center.x + localOffset.x * rightX + localOffset.y * facing.x,
+    y: center.y + localOffset.x * rightY + localOffset.y * facing.y,
+  };
+}
+
 /**
  * Compute the position of a single troop slot within a formation.
  *
@@ -46,6 +80,7 @@ export const FORMATION_FORWARD_OFFSET = 30;
  * @param index - The troop's index within the formation (0-based)
  * @param total - Total number of troops in the formation
  * @param spacing - Distance between adjacent troops (default: FORMATION_SPACING)
+ * @param facing - World-space forward direction (default: south/+y for demo)
  * @returns The world position for this troop slot
  */
 export function computeFormationSlot(
@@ -54,25 +89,14 @@ export function computeFormationSlot(
   index: number,
   total: number,
   spacing: number = FORMATION_SPACING,
+  facing: Vec2 = DEFAULT_FACING,
 ): Vec2 {
   // Guard against invalid inputs
   if (total <= 0) return { x: center.x, y: center.y };
   if (index < 0 || index >= total) return { x: center.x, y: center.y };
 
-  switch (formation) {
-    case 'line':
-      return computeLineSlot(center, index, total, spacing);
-    case 'column':
-      return computeColumnSlot(center, index, spacing);
-    case 'wedge':
-      return computeWedgeSlot(center, index, spacing);
-    case 'defensive_circle':
-      return computeCircleSlot(center, index, total, spacing);
-    case 'scatter':
-      return computeScatterSlot(center, index, total, spacing);
-    case 'pincer':
-      return computePincerSlot(center, index, total, spacing);
-  }
+  const localOffset = computeLocalSlot(formation, index, total, spacing);
+  return applyFacing(center, localOffset, facing);
 }
 
 /**
@@ -85,29 +109,57 @@ export function computeFormationPositions(
   center: Vec2,
   count: number,
   spacing: number = FORMATION_SPACING,
+  facing: Vec2 = DEFAULT_FACING,
 ): Vec2[] {
   const positions: Vec2[] = [];
   for (let i = 0; i < count; i++) {
-    positions.push(computeFormationSlot(formation, center, i, count, spacing));
+    positions.push(computeFormationSlot(formation, center, i, count, spacing, facing));
   }
   return positions;
 }
 
-// ─── Individual Formation Computations ──────────────────────────────────────
+// ─── Local Slot Computation (canonical space: forward = +y) ─────────────────
 
 /**
- * Line formation: horizontal row centered on leader, offset forward.
+ * Compute a formation slot offset in canonical space (forward = south/+y).
+ * Returns { x: right-offset, y: forward-offset } relative to center.
+ */
+function computeLocalSlot(
+  formation: FormationType,
+  index: number,
+  total: number,
+  spacing: number,
+): Vec2 {
+  switch (formation) {
+    case 'line':
+      return computeLineLocal(index, total, spacing);
+    case 'column':
+      return computeColumnLocal(index, spacing);
+    case 'wedge':
+      return computeWedgeLocal(index, spacing);
+    case 'defensive_circle':
+      return computeCircleLocal(index, total, spacing);
+    case 'scatter':
+      return computeScatterLocal(index, total, spacing);
+    case 'pincer':
+      return computePincerLocal(index, total, spacing);
+  }
+}
+
+// ─── Individual Formation Local Computations ─────────────────────────────────
+
+/**
+ * Line formation: row perpendicular to facing, offset forward.
  *
  * ```
  *         [Lt]
  *   T  T  T  T  T  T
  * ```
  */
-function computeLineSlot(center: Vec2, index: number, total: number, spacing: number): Vec2 {
-  const startX = center.x - ((total - 1) * spacing) / 2;
+function computeLineLocal(index: number, total: number, spacing: number): Vec2 {
   return {
-    x: startX + index * spacing,
-    y: center.y + FORMATION_FORWARD_OFFSET,
+    x: (index - (total - 1) / 2) * spacing,
+    y: FORMATION_FORWARD_OFFSET,
   };
 }
 
@@ -122,10 +174,10 @@ function computeLineSlot(center: Vec2, index: number, total: number, spacing: nu
  *    T
  * ```
  */
-function computeColumnSlot(center: Vec2, index: number, spacing: number): Vec2 {
+function computeColumnLocal(index: number, spacing: number): Vec2 {
   return {
-    x: center.x,
-    y: center.y + 20 + index * spacing,
+    x: 0,
+    y: 20 + index * spacing,
   };
 }
 
@@ -140,12 +192,12 @@ function computeColumnSlot(center: Vec2, index: number, spacing: number): Vec2 {
  *    T     T
  * ```
  */
-function computeWedgeSlot(center: Vec2, index: number, spacing: number): Vec2 {
+function computeWedgeLocal(index: number, spacing: number): Vec2 {
   const row = Math.floor(index / 2);
   const side = index % 2 === 0 ? -1 : 1;
   return {
-    x: center.x + side * row * spacing,
-    y: center.y + 20 + row * spacing,
+    x: side * row * spacing,
+    y: 20 + row * spacing,
   };
 }
 
@@ -158,12 +210,12 @@ function computeWedgeSlot(center: Vec2, index: number, spacing: number): Vec2 {
  *      T
  * ```
  */
-function computeCircleSlot(center: Vec2, index: number, total: number, spacing: number): Vec2 {
+function computeCircleLocal(index: number, total: number, spacing: number): Vec2 {
   const radius = Math.max(30, (total * spacing) / (2 * Math.PI));
   const angle = (index / total) * 2 * Math.PI;
   return {
-    x: center.x + Math.cos(angle) * radius,
-    y: center.y + Math.sin(angle) * radius,
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
   };
 }
 
@@ -176,14 +228,14 @@ function computeCircleSlot(center: Vec2, index: number, total: number, spacing: 
  *   T     T     T
  * ```
  */
-function computeScatterSlot(center: Vec2, index: number, total: number, spacing: number): Vec2 {
+function computeScatterLocal(index: number, total: number, spacing: number): Vec2 {
   const cols = Math.ceil(Math.sqrt(total));
   const rows = Math.ceil(total / cols);
   const row = Math.floor(index / cols);
   const col = index % cols;
   return {
-    x: center.x - (cols * spacing) / 2 + col * spacing * 1.5,
-    y: center.y - (rows * spacing) / 2 + row * spacing * 1.5,
+    x: (col - (cols - 1) / 2) * spacing * 1.5,
+    y: (row - (rows - 1) / 2) * spacing * 1.5,
   };
 }
 
@@ -196,22 +248,23 @@ function computeScatterSlot(center: Vec2, index: number, total: number, spacing:
  *   T           T
  * ```
  */
-function computePincerSlot(center: Vec2, index: number, total: number, spacing: number): Vec2 {
+function computePincerLocal(index: number, total: number, spacing: number): Vec2 {
   const half = Math.ceil(total / 2);
+  const flankOffset = 40;
 
   if (index < half) {
     // Left group
     return {
-      x: center.x - 40,
-      y: center.y + (index - half / 2) * spacing,
+      x: -flankOffset,
+      y: (index - (half - 1) / 2) * spacing,
     };
   } else {
     // Right group
     const i = index - half;
     const rightCount = total - half;
     return {
-      x: center.x + 40,
-      y: center.y + (i - rightCount / 2) * spacing,
+      x: flankOffset,
+      y: (i - (rightCount - 1) / 2) * spacing,
     };
   }
 }

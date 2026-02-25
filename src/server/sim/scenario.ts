@@ -117,14 +117,14 @@ export function createBasicScenario(): ScenarioSetup {
   
   // Player army - left side
   // 3 squads of 10 troops each, one per lieutenant
-  const playerSquad1 = createSquad('p_s1', 'player', { x: 50, y: 80 }, 10, 'lt_alpha', 'squad_1');
-  const playerSquad2 = createSquad('p_s2', 'player', { x: 50, y: 150 }, 10, 'lt_bravo', 'squad_2');
-  const playerSquad3 = createSquad('p_s3', 'player', { x: 50, y: 220 }, 10, 'lt_charlie', 'squad_3');
+  const playerSquad1 = createSquad('p_s1', 'player', { x: 80, y: 80 }, 10, 'lt_alpha', 'squad_1');
+  const playerSquad2 = createSquad('p_s2', 'player', { x: 80, y: 150 }, 10, 'lt_bravo', 'squad_2');
+  const playerSquad3 = createSquad('p_s3', 'player', { x: 80, y: 220 }, 10, 'lt_charlie', 'squad_3');
   
   // Lieutenant agents for player — positioned behind their squads, higher visibility radius
-  const ltAlpha = createLieutenantAgent('lt_alpha', 'player', { x: 30, y: 80 });
-  const ltBravo = createLieutenantAgent('lt_bravo', 'player', { x: 30, y: 150 });
-  const ltCharlie = createLieutenantAgent('lt_charlie', 'player', { x: 30, y: 220 });
+  const ltAlpha = createLieutenantAgent('lt_alpha', 'player', { x: 20, y: 80 });
+  const ltBravo = createLieutenantAgent('lt_bravo', 'player', { x: 20, y: 150 });
+  const ltCharlie = createLieutenantAgent('lt_charlie', 'player', { x: 20, y: 220 });
 
   agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3, ltAlpha, ltBravo, ltCharlie);
 

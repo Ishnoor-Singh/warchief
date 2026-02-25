@@ -210,7 +210,7 @@ function NodeRow({
   onUpdate,
   onDelete,
   mapWidth,
-  mapHeight,
+  mapHeight: _mapHeight,
 }: {
   node: FlowchartNode;
   onUpdate: (updated: FlowchartNode) => void;

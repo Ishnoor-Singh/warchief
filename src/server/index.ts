@@ -14,7 +14,7 @@ import { createLieutenant, processOrder, Lieutenant, LLMClient, OrderContext } f
 import { VisibleUnitInfo, VisibleEnemyInfo } from './agents/input-builder.js';
 import { compileDirectives, applyFlowcharts } from './agents/compiler.js';
 import { createAICommander, generateCommanderOrders, AICommander } from './agents/ai-commander.js';
-import { Flowchart, FlowchartNode, createPersonalityFlowchart } from './runtime/flowchart.js';
+import { Flowchart, FlowchartNode, FlowchartRuntime, createPersonalityFlowchart } from './runtime/flowchart.js';
 import { type TroopAgent, type TroopStats } from '../shared/types/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -907,19 +907,19 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
 
       for (const troopId of ltToUpdate.troopIds) {
-        const runtime = session.simulation.runtimes.get(troopId);
+        const runtime: FlowchartRuntime | undefined = session.simulation!.runtimes.get(troopId);
         if (!runtime) continue;
 
         if (operation === 'add' && node) {
           // Use base node id across all troops so deduplication in buildLieutenantFlowchart works
           runtime.flowchart.nodes.push(node as unknown as FlowchartNode);
         } else if (operation === 'update' && node) {
-          const idx = runtime.flowchart.nodes.findIndex(n => n.id === node.id);
+          const idx = runtime.flowchart.nodes.findIndex((n: FlowchartNode) => n.id === node.id);
           if (idx >= 0) {
             runtime.flowchart.nodes[idx] = node as unknown as FlowchartNode;
           }
         } else if (operation === 'delete' && nodeId) {
-          runtime.flowchart.nodes = runtime.flowchart.nodes.filter(n => n.id !== nodeId);
+          runtime.flowchart.nodes = runtime.flowchart.nodes.filter((n: FlowchartNode) => n.id !== nodeId);
         }
       }
 

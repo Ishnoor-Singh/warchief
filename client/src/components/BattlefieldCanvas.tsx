@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import type { BattleState, VisibilityZone, Lieutenant } from '../types';
+import type { BattleState, Lieutenant } from '../types';
 
 interface Props {
   battleState: BattleState;
@@ -133,11 +133,11 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
         ctx.stroke();
       }
 
-      // Draw fog of war
-      const zones = battleState.visibilityZones;
-      if (zones && zones.length > 0) {
-        drawFogOfWar(ctx, w, h, zones);
-      }
+      // Fog of war disabled for clarity
+      // const zones = battleState.visibilityZones;
+      // if (zones && zones.length > 0) {
+      //   drawFogOfWar(ctx, w, h, zones);
+      // }
 
       // Collect lieutenant positions for drawing connection lines
       const ltPositions = new Map<string, { x: number; y: number }>();
@@ -397,33 +397,7 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
   );
 }
 
-function drawFogOfWar(ctx: CanvasRenderingContext2D, w: number, h: number, zones: VisibilityZone[]) {
-  ctx.save();
-
-  ctx.fillStyle = 'rgba(5, 5, 15, 0.6)';
-  ctx.fillRect(0, 0, w, h);
-
-  ctx.globalCompositeOperation = 'destination-out';
-
-  for (const zone of zones) {
-    const cx = zone.position.x * SCALE;
-    const cy = zone.position.y * SCALE;
-    const r = zone.radius * SCALE;
-
-    const gradient = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r);
-    gradient.addColorStop(0, 'rgba(0,0,0,1)');
-    gradient.addColorStop(0.7, 'rgba(0,0,0,0.8)');
-    gradient.addColorStop(1, 'rgba(0,0,0,0)');
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = gradient;
-    ctx.fill();
-  }
-
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.restore();
-}
+// Fog of war function removed (disabled for clarity)
 
 function drawFormationIndicator(
   ctx: CanvasRenderingContext2D,

@@ -973,15 +973,12 @@ function sendAllLieutenantFlowcharts(session: GameSession) {
   }
 }
 
-// Send visibility-filtered battle state to the player
+// Send battle state to the player
 function sendBattleState(session: GameSession) {
   if (!session.simulation) return;
 
-  // In AI vs AI mode, show full battlefield (omniscient observer view)
-  // In human vs AI mode, show player-team filtered view with fog of war
-  const filtered = session.gameMode === 'ai_vs_ai'
-    ? getFullStateForObserver(session.simulation)
-    : getFilteredStateForTeam(session.simulation, 'player');
+  // Show full battlefield (fog of war disabled for clarity)
+  const filtered = getFullStateForObserver(session.simulation);
 
   // Also include currentNodeId from runtimes for flowchart highlighting
   const activeNodes: Record<string, string | null> = {};

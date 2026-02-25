@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import type { BattleState, Lieutenant } from '../types';
+import type { BattleState, Lieutenant, TerrainFeature } from '../types';
 
 interface Props {
   battleState: BattleState;
@@ -33,13 +33,20 @@ const COMBAT_RANGE = 25;
 
 // VFX state stored outside React to avoid re-renders
 interface VFXEffect {
-  type: 'death' | 'hit' | 'combat_flash';
+  type: 'death' | 'hit' | 'combat_flash' | 'rout';
   x: number;
   y: number;
   startTime: number;
   duration: number;
   team: string;
 }
+
+// Terrain colors
+const TERRAIN_COLORS: Record<string, { fill: string; stroke: string; label: string }> = {
+  hill: { fill: 'rgba(139, 119, 42, 0.25)', stroke: 'rgba(180, 155, 50, 0.5)', label: 'Hill' },
+  forest: { fill: 'rgba(34, 100, 34, 0.3)', stroke: 'rgba(50, 140, 50, 0.5)', label: 'Forest' },
+  river: { fill: 'rgba(30, 80, 160, 0.3)', stroke: 'rgba(60, 120, 200, 0.5)', label: 'River' },
+};
 
 const vfxEffects: VFXEffect[] = [];
 
@@ -206,6 +213,37 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
         ctx.stroke();
       }
 
+      // Draw terrain features
+      if (battleState.terrain) {
+        for (const feature of battleState.terrain) {
+          const colors = TERRAIN_COLORS[feature.type];
+          if (!colors) continue;
+
+          const fx = feature.position.x * SCALE;
+          const fy = feature.position.y * SCALE;
+          const fw = feature.size.x * SCALE;
+          const fh = feature.size.y * SCALE;
+
+          // Fill
+          ctx.fillStyle = colors.fill;
+          ctx.fillRect(fx, fy, fw, fh);
+
+          // Border
+          ctx.strokeStyle = colors.stroke;
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(fx, fy, fw, fh);
+
+          // Label
+          ctx.font = 'bold 10px Inter, sans-serif';
+          ctx.fillStyle = colors.stroke;
+          ctx.textAlign = 'center';
+          ctx.globalAlpha = 0.7;
+          ctx.fillText(colors.label, fx + fw / 2, fy + fh / 2 + 4);
+          ctx.globalAlpha = 1;
+          ctx.textAlign = 'start';
+        }
+      }
+
       // Draw direction labels (brighter for visibility)
       ctx.font = 'bold 14px Inter, sans-serif';
       ctx.fillStyle = '#8892a2';
@@ -368,7 +406,13 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
         }
 
         // Action indicator border
-        if (agent.currentAction === 'engaging') {
+        if (agent.currentAction === 'routing') {
+          // Routing: pulsing yellow warning border
+          const routPulse = 0.5 + Math.sin(now / 100) * 0.5;
+          ctx.strokeStyle = `rgba(255, 220, 50, ${routPulse})`;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        } else if (agent.currentAction === 'engaging') {
           ctx.strokeStyle = '#ff6b6b';
           ctx.lineWidth = 2;
           ctx.stroke();
@@ -404,6 +448,21 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
 
           ctx.fillStyle = healthRatio > 0.5 ? '#4aff6a' : healthRatio > 0.25 ? '#ffaa4a' : '#ff4a4a';
           ctx.fillRect(barX, barY, barWidth * healthRatio, barHeight);
+        }
+
+        // Morale bar for low-morale units (below health bar)
+        const moraleRatio = agent.morale / 100;
+        if (moraleRatio < 0.6 && !isLt) {
+          const barWidth = radius * 2;
+          const barHeight = 1.5;
+          const barX = x - radius;
+          const barY = y + radius + 2;
+
+          ctx.fillStyle = '#222';
+          ctx.fillRect(barX, barY, barWidth, barHeight);
+
+          ctx.fillStyle = moraleRatio > 0.3 ? '#ffd700' : '#ff4500';
+          ctx.fillRect(barX, barY, barWidth * moraleRatio, barHeight);
         }
       }
 

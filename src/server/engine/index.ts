@@ -127,3 +127,34 @@ export type { SpatialWorld } from './spatial.js';
 
 // Condition evaluation
 export { evaluateCondition } from './conditions.js';
+
+// Terrain
+export {
+  createTerrainMap,
+  getTerrainAt,
+  getAllTerrainAt,
+  getTerrainModifiers,
+  getEffectiveVisibilityRadius,
+  getTerrainTypeModifiers,
+  isInsideFeature,
+} from './terrain.js';
+export type { TerrainType, TerrainFeature, TerrainMap, TerrainModifiers } from './terrain.js';
+
+// Combat modifiers
+export {
+  getFormationModifiers,
+  calculateFlankingMultiplier,
+  calculateChargeBonusDamage,
+} from './combat-modifiers.js';
+export type { FormationCombatModifiers, FlankDirection, FlankingResult } from './combat-modifiers.js';
+
+// Morale
+export {
+  shouldRout,
+  applyRoutingPanic,
+  checkMoraleRecovery,
+  ROUT_MORALE_THRESHOLD,
+  ROUTING_PANIC_RANGE,
+  ROUTING_PANIC_MORALE_LOSS,
+  MORALE_RECOVERY_RATE,
+} from './morale.js';

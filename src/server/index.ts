@@ -274,7 +274,16 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
 
       // Create scenario
-      const scenarioData = (scenario || 'basic') === 'assault' ? createAssaultScenario() : createBasicScenario();
+      const scenarioName = scenario || 'basic';
+      let scenarioData;
+      if (scenarioName === 'assault') {
+        scenarioData = createAssaultScenario();
+      } else if (scenarioName === 'river_crossing') {
+        const { createRiverCrossingScenario } = await import('./sim/scenario.js');
+        scenarioData = createRiverCrossingScenario();
+      } else {
+        scenarioData = createBasicScenario();
+      }
 
       // Create simulation with message routing callbacks
       session.simulation = createSimulation(
@@ -306,6 +315,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
           },
         }
       );
+
+      // Apply terrain from scenario
+      if (scenarioData.terrain) {
+        session.simulation.terrain = scenarioData.terrain;
+      }
 
       // Create player lieutenants
       session.lieutenants = [
@@ -561,6 +575,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
             },
           }
         );
+
+        // Apply terrain from scenario
+        if (scenarioData.terrain) {
+          session.simulation.terrain = scenarioData.terrain;
+        }
 
         session.lieutenants = [
           createLieutenant({

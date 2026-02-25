@@ -1823,6 +1823,154 @@ body {
   color: var(--text-dim);
 }
 
+.formation-stats {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-dim);
+}
+
+/* Combat mechanics examples */
+.mechanics-example {
+  margin: 16px 0;
+}
+
+.mechanics-example h3 {
+  font-size: 15px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.example-box {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.example-scenario {
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.example-label {
+  font-weight: 700;
+  color: var(--accent);
+  margin-right: 6px;
+}
+
+.example-calc {
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.example-result {
+  color: var(--text-dim);
+  font-style: italic;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+/* Terrain cards */
+.terrain-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.terrain-card {
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.terrain-card h3 {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.terrain-card p {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 2px 0;
+}
+
+.terrain-tip {
+  font-style: italic;
+  margin-top: 8px !important;
+  color: var(--accent) !important;
+}
+
+/* Unit type cards */
+.unit-types-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.unit-card {
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.unit-card h3 {
+  font-size: 14px;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.unit-card p {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 8px;
+}
+
+.unit-stat-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.stat-row > span:first-child {
+  width: 50px;
+  text-align: right;
+}
+
+.stat-row > span:last-child {
+  width: 20px;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.stat-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stat-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
 /* Instructions footer */
 .instructions-footer {
   margin-top: 48px;

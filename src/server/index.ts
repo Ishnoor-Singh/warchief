@@ -8,7 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
 
-import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, SimulationState, distance } from './sim/simulation.js';
+import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, SimulationState, distance, BattleEvent } from './sim/simulation.js';
 import { createBasicScenario, createAssaultScenario } from './sim/scenario.js';
 import { createLieutenant, processOrder, Lieutenant, LLMClient, OrderContext } from './agents/lieutenant.js';
 import { VisibleUnitInfo, VisibleEnemyInfo } from './agents/input-builder.js';
@@ -36,6 +36,7 @@ interface GameSession {
   timer: NodeJS.Timeout | null;
   anthropicClient: LLMClient | null;
   aiCommanderInterval: number;           // How often AI commander acts (in ticks)
+  speed: number;                         // Simulation speed multiplier (0.5, 1, 2)
 }
 
 const sessions = new Map<WebSocket, GameSession>();
@@ -90,6 +91,7 @@ wss.on('connection', (ws) => {
     timer: null,
     anthropicClient: null,
     aiCommanderInterval: AI_COMMANDER_INTERVAL,
+    speed: 1,
   };
 
   sessions.set(ws, session);
@@ -128,6 +130,65 @@ function send(ws: WebSocket, message: unknown) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
   }
+}
+
+// Shared simulation loop used by start_battle, resume_battle, and set_speed
+function createBattleInterval(session: GameSession): NodeJS.Timeout {
+  const intervalMs = Math.round(100 / session.speed);
+
+  return setInterval(() => {
+    if (!session.simulation || !session.simulation.battle.running) return;
+
+    simulationTick(session.simulation);
+
+    // Drain and send battle events
+    if (session.simulation.pendingBattleEvents.length > 0) {
+      const events = session.simulation.pendingBattleEvents.splice(0);
+      for (const evt of events) {
+        send(session.ws, { type: 'battle_event', data: evt });
+      }
+    }
+
+    // Send state every 5 ticks (visibility-filtered)
+    if (session.simulation.battle.tick % 5 === 0) {
+      sendBattleState(session);
+    }
+
+    // AI Commander decision cycle (non-blocking)
+    if (
+      session.aiCommander &&
+      !session.aiCommander.busy &&
+      session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
+      session.simulation.battle.tick > 0
+    ) {
+      runAICommanderCycle(session, session.aiCommander, session.enemyLieutenants).catch(err => {
+        console.error('Enemy AI Commander error:', err);
+      });
+    }
+
+    // Player AI Commander cycle (ai_vs_ai mode)
+    if (
+      session.playerAICommander &&
+      !session.playerAICommander.busy &&
+      session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
+      session.simulation.battle.tick > 0
+    ) {
+      runAICommanderCycle(session, session.playerAICommander, session.lieutenants).catch(err => {
+        console.error('Player AI Commander error:', err);
+      });
+    }
+
+    // Check for battle end
+    if (session.simulation.battle.winner) {
+      if (session.timer) clearInterval(session.timer);
+
+      const summary = getDetailedBattleSummary(session.simulation);
+      send(session.ws, {
+        type: 'battle_end',
+        data: { winner: summary.winner, summary },
+      });
+    }
+  }, intervalMs);
 }
 
 async function handleMessage(session: GameSession, message: { type: string; data?: unknown }) {
@@ -355,57 +416,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
 
       session.simulation.battle.running = true;
-
-      // Start simulation loop
-      session.timer = setInterval(() => {
-        if (session.simulation && session.simulation.battle.running) {
-          // Run simulation tick
-          simulationTick(session.simulation);
-
-          // Send state every 5 ticks (visibility-filtered)
-          if (session.simulation.battle.tick % 5 === 0) {
-            sendBattleState(session);
-          }
-
-          // AI Commander decision cycle (non-blocking)
-          if (
-            session.aiCommander &&
-            !session.aiCommander.busy &&
-            session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
-            session.simulation.battle.tick > 0
-          ) {
-            runAICommanderCycle(session, session.aiCommander, session.enemyLieutenants).catch(err => {
-              console.error('Enemy AI Commander error:', err);
-            });
-          }
-
-          // Player AI Commander cycle (ai_vs_ai mode)
-          if (
-            session.playerAICommander &&
-            !session.playerAICommander.busy &&
-            session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
-            session.simulation.battle.tick > 0
-          ) {
-            runAICommanderCycle(session, session.playerAICommander, session.lieutenants).catch(err => {
-              console.error('Player AI Commander error:', err);
-            });
-          }
-
-          // Check for battle end
-          if (session.simulation.battle.winner) {
-            if (session.timer) clearInterval(session.timer);
-
-            const summary = getDetailedBattleSummary(session.simulation);
-            send(ws, {
-              type: 'battle_end',
-              data: {
-                winner: summary.winner,
-                summary,
-              },
-            });
-          }
-        }
-      }, 100);
+      session.timer = createBattleInterval(session);
 
       send(ws, { type: 'battle_started', data: { gameMode: session.gameMode } });
       break;
@@ -426,51 +437,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
     case 'resume_battle': {
       if (session.simulation && !session.simulation.battle.running) {
         session.simulation.battle.running = true;
-
-        // Restart the simulation loop
-        session.timer = setInterval(() => {
-          if (session.simulation && session.simulation.battle.running) {
-            simulationTick(session.simulation);
-
-            if (session.simulation.battle.tick % 5 === 0) {
-              sendBattleState(session);
-            }
-
-            if (
-              session.aiCommander &&
-              !session.aiCommander.busy &&
-              session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
-              session.simulation.battle.tick > 0
-            ) {
-              runAICommanderCycle(session, session.aiCommander, session.enemyLieutenants).catch(err => {
-                console.error('Enemy AI Commander error:', err);
-              });
-            }
-
-            // Player AI Commander cycle (ai_vs_ai mode)
-            if (
-              session.playerAICommander &&
-              !session.playerAICommander.busy &&
-              session.simulation.battle.tick % session.aiCommanderInterval === 0 &&
-              session.simulation.battle.tick > 0
-            ) {
-              runAICommanderCycle(session, session.playerAICommander, session.lieutenants).catch(err => {
-                console.error('Player AI Commander error:', err);
-              });
-            }
-
-            if (session.simulation.battle.winner) {
-              if (session.timer) clearInterval(session.timer);
-
-              const summary = getDetailedBattleSummary(session.simulation);
-              send(ws, {
-                type: 'battle_end',
-                data: { winner: summary.winner, summary },
-              });
-            }
-          }
-        }, 100);
-
+        session.timer = createBattleInterval(session);
         send(ws, { type: 'battle_resumed', data: {} });
       }
       break;
@@ -581,6 +548,21 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
 
       sendLieutenants(session);
+      break;
+    }
+
+    case 'set_speed': {
+      const { speed } = message.data as { speed: number };
+      if ([0.5, 1, 2].includes(speed)) {
+        session.speed = speed;
+        send(ws, { type: 'speed_set', data: { speed } });
+
+        // Restart the interval with new speed if battle is running
+        if (session.timer && session.simulation?.battle.running) {
+          clearInterval(session.timer);
+          session.timer = createBattleInterval(session);
+        }
+      }
       break;
     }
   }

@@ -38,6 +38,15 @@ export interface SimulationCallbacks {
   onTroopMessage?: (agentId: string, type: 'requestSupport' | 'report' | 'alert', message: string) => void;
 }
 
+// Battle events for the client-side ticker
+export interface BattleEvent {
+  type: 'kill' | 'engagement' | 'retreat' | 'squad_wiped' | 'casualty_milestone';
+  tick: number;
+  team: Team;          // which team this event primarily concerns
+  message: string;     // human-readable description
+  position?: Vec2;     // where it happened (for map highlighting)
+}
+
 export interface SimulationState {
   battle: BattleState;
   runtimes: Map<string, FlowchartRuntime>;  // flowchart runtime per agent
@@ -46,6 +55,8 @@ export interface SimulationState {
   callbacks: SimulationCallbacks;
   onTick?: (state: SimulationState) => void;
   onBattleEnd?: (winner: Team) => void;
+  pendingBattleEvents: BattleEvent[];  // events generated this tick, drained by server
+  activeEngagements: Set<string>;  // track which pairs are currently fighting (to avoid duplicate events)
 }
 
 // Initialize simulation with agents and their flowcharts
@@ -87,6 +98,8 @@ export function createSimulation(
     lastCombat: new Map(),
     squadCasualties,
     callbacks,
+    pendingBattleEvents: [],
+    activeEngagements: new Set(),
   };
 }
 
@@ -317,12 +330,37 @@ function resolveCombat(state: SimulationState): void {
   
   // Resolve each combat
   for (const [a, b] of combatPairs) {
+    // Emit engagement event for new combat pairs
+    const pairKey = [a.id, b.id].sort().join(':');
+    if (!state.activeEngagements.has(pairKey)) {
+      state.activeEngagements.add(pairKey);
+      // Only emit engagement events occasionally to avoid spam
+      const aTeamLabel = a.team === 'player' ? 'Your' : 'Enemy';
+      state.pendingBattleEvents.push({
+        type: 'engagement',
+        tick: state.battle.tick,
+        team: a.team,
+        message: `${aTeamLabel} forces clashing with the enemy at (${Math.round(a.position.x)}, ${Math.round(a.position.y)})`,
+        position: { x: (a.position.x + b.position.x) / 2, y: (a.position.y + b.position.y) / 2 },
+      });
+    }
+
     // Both sides deal damage
     const resultA = calculateDamage(a, b);
     const resultB = calculateDamage(b, a);
-    
+
     applyDamage(state, b, resultA);
     applyDamage(state, a, resultB);
+  }
+
+  // Clean up engagement tracking for pairs no longer in combat
+  for (const key of state.activeEngagements) {
+    const [idA, idB] = key.split(':');
+    const agentA = state.battle.agents.get(idA!);
+    const agentB = state.battle.agents.get(idB!);
+    if (!agentA?.alive || !agentB?.alive || distance(agentA.position, agentB.position) > COMBAT_RANGE * 1.5) {
+      state.activeEngagements.delete(key);
+    }
   }
 }
 
@@ -368,6 +406,17 @@ function applyDamage(state: SimulationState, agent: AgentState, result: CombatRe
     agent.alive = false;
     result.defenderDied = true;
 
+    // Emit kill event
+    const victimTeam = agent.team;
+    const teamLabel = victimTeam === 'player' ? 'Your' : 'Enemy';
+    state.pendingBattleEvents.push({
+      type: 'kill',
+      tick: state.battle.tick,
+      team: victimTeam,
+      message: `${teamLabel} ${agent.type} fell at (${Math.round(agent.position.x)}, ${Math.round(agent.position.y)})`,
+      position: { ...agent.position },
+    });
+
     // Fire ally_down event and reduce morale for nearby allies
     for (const other of state.battle.agents.values()) {
       if (other.team !== agent.team) continue;
@@ -412,6 +461,28 @@ function applyDamage(state: SimulationState, agent: AgentState, result: CombatRe
               };
               queueEvent(otherRuntime, casualtyEvent);
             }
+          }
+
+          // Emit casualty milestone events at 25%, 50%, 75%
+          if (lossPercent === 25 || lossPercent === 50 || lossPercent === 75) {
+            const teamLabel = agent.team === 'player' ? 'Your' : 'Enemy';
+            state.pendingBattleEvents.push({
+              type: 'casualty_milestone',
+              tick: state.battle.tick,
+              team: agent.team,
+              message: `${teamLabel} ${agent.squadId} has taken ${lossPercent}% casualties`,
+            });
+          }
+
+          // Squad wiped
+          if (squad.dead >= squad.total) {
+            const teamLabel = agent.team === 'player' ? 'Your' : 'Enemy';
+            state.pendingBattleEvents.push({
+              type: 'squad_wiped',
+              tick: state.battle.tick,
+              team: agent.team,
+              message: `${teamLabel} ${agent.squadId} has been wiped out!`,
+            });
           }
         }
       }

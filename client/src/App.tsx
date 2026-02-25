@@ -63,6 +63,7 @@ function App() {
   // Pre-battle scenario state
   const [troopInfo, setTroopInfo] = useState<Record<string, TroopInfo[]>>({});
   const [scenarioReady, setScenarioReady] = useState(false);
+  const [mapSize, setMapSize] = useState<{ width: number; height: number }>({ width: 400, height: 300 });
 
   // Ref to hold send function so handleWSMessage doesn't depend on it
   const sendRef = useRef<(message: unknown) => void>(() => {});
@@ -132,6 +133,7 @@ function App() {
           mapSize: { width: number; height: number };
         };
         setTroopInfo(data.troopInfo);
+        setMapSize(data.mapSize);
         setScenarioReady(true);
         break;
       }
@@ -293,6 +295,30 @@ function App() {
     scenarioInitRef.current = false;
   }, []);
 
+  const handleUpdateLtConfig = useCallback((
+    ltId: string,
+    personality?: 'aggressive' | 'cautious' | 'disciplined' | 'impulsive',
+    stats?: { initiative?: number; discipline?: number; communication?: number }
+  ) => {
+    send({ type: 'update_lieutenant_config', data: { lieutenantId: ltId, personality, stats } });
+  }, [send]);
+
+  const handleUpdateSquadStats = useCallback((
+    squadId: string,
+    stats: { combat?: number; speed?: number; courage?: number; discipline?: number }
+  ) => {
+    send({ type: 'update_squad_stats', data: { squadId, stats } });
+  }, [send]);
+
+  const handleUpdateFlowchartNode = useCallback((
+    ltId: string,
+    operation: 'add' | 'update' | 'delete',
+    node?: import('./types').FlowchartNode,
+    nodeId?: string
+  ) => {
+    send({ type: 'update_flowchart_node', data: { lieutenantId: ltId, operation, node, nodeId } });
+  }, [send]);
+
   // Compute troop counts per lieutenant
   const troopCounts = useMemo(() => {
     const counts: Record<string, { alive: number; total: number }> = {};
@@ -394,6 +420,11 @@ function App() {
           enemyPersonality={enemyPersonality}
           onPlayerPersonalityChange={setPlayerPersonality}
           onEnemyPersonalityChange={setEnemyPersonality}
+          flowcharts={flowcharts}
+          mapSize={mapSize}
+          onUpdateLtConfig={handleUpdateLtConfig}
+          onUpdateSquadStats={handleUpdateSquadStats}
+          onUpdateFlowchartNode={handleUpdateFlowchartNode}
         />
       ) : phase === 'post-battle' ? (
         <EndScreen

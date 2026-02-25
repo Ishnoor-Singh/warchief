@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import type { Lieutenant, Message, GameMode, TroopInfo } from '../types';
+import type { Lieutenant, Message, GameMode, TroopInfo, Flowchart, FlowchartNode, LieutenantStats, TroopStats } from '../types';
+import { MapPreview } from './MapPreview';
+import { FlowchartEditor } from './FlowchartEditor';
 
 interface Props {
   lieutenants: Lieutenant[];
@@ -15,6 +17,11 @@ interface Props {
   enemyPersonality: 'aggressive' | 'cautious' | 'balanced';
   onPlayerPersonalityChange: (p: 'aggressive' | 'cautious' | 'balanced') => void;
   onEnemyPersonalityChange: (p: 'aggressive' | 'cautious' | 'balanced') => void;
+  flowcharts: Record<string, Flowchart>;
+  mapSize: { width: number; height: number };
+  onUpdateLtConfig: (ltId: string, personality?: Lieutenant['personality'], stats?: Partial<LieutenantStats>) => void;
+  onUpdateSquadStats: (squadId: string, stats: Partial<TroopStats>) => void;
+  onUpdateFlowchartNode: (ltId: string, operation: 'add' | 'update' | 'delete', node?: FlowchartNode, nodeId?: string) => void;
 }
 
 const PERSONALITY_DESCRIPTIONS: Record<string, string> = {
@@ -34,10 +41,230 @@ const BRIEFING_PLACEHOLDERS: Record<string, string> = {
   aggressive: "You're on the left flank. Take the ridge fast. Don't wait for support.",
   cautious: "Hold the center. Watch for flanking maneuvers. Report enemy movements.",
   disciplined: "You have the right flank. Maintain formation. Advance only on my signal.",
+  impulsive: "Rush forward and engage on contact. Keep moving.",
 };
 
-function TroopInfoPanel({ troops }: { troops: TroopInfo[] }) {
-  // Group troops by squad
+// ── Stat number editor ────────────────────────────────────────────────
+function StatInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="stat-input-group">
+      <button
+        className="stat-nudge"
+        onClick={() => onChange(Math.max(1, value - 1))}
+        disabled={value <= 1}
+      >−</button>
+      <span className="stat-input-val">{value}</span>
+      <button
+        className="stat-nudge"
+        onClick={() => onChange(Math.min(10, value + 1))}
+        disabled={value >= 10}
+      >+</button>
+    </div>
+  );
+}
+
+// ── Lieutenant card with inline stat editing ─────────────────────────
+function LieutenantCard({
+  lt,
+  onUpdateConfig,
+}: {
+  lt: Lieutenant;
+  onUpdateConfig: (ltId: string, personality?: Lieutenant['personality'], stats?: Partial<LieutenantStats>) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftStats, setDraftStats] = useState<LieutenantStats>(lt.stats ?? { initiative: 5, discipline: 5, communication: 5 });
+  const [draftPersonality, setDraftPersonality] = useState<Lieutenant['personality']>(lt.personality);
+
+  function startEdit() {
+    setDraftStats(lt.stats ?? { initiative: 5, discipline: 5, communication: 5 });
+    setDraftPersonality(lt.personality);
+    setEditing(true);
+  }
+
+  function saveEdit() {
+    onUpdateConfig(lt.id, draftPersonality, draftStats);
+    setEditing(false);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+  }
+
+  return (
+    <div className="war-room-lt-card">
+      <div className="lt-card-header">
+        <h3>{lt.name}</h3>
+        {!editing && (
+          <button className="lt-card-edit-btn" onClick={startEdit} title="Edit stats and personality">
+            Edit
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <>
+          <div className="lt-edit-field">
+            <label className="lt-edit-label">Personality</label>
+            <select
+              className="lt-edit-select"
+              value={draftPersonality}
+              onChange={e => setDraftPersonality(e.target.value as Lieutenant['personality'])}
+            >
+              <option value="aggressive">Aggressive</option>
+              <option value="cautious">Cautious</option>
+              <option value="disciplined">Disciplined</option>
+              <option value="impulsive">Impulsive</option>
+            </select>
+            <div className="lt-edit-hint">{PERSONALITY_DESCRIPTIONS[draftPersonality]}</div>
+          </div>
+
+          <div className="lt-edit-field">
+            <label className="lt-edit-label">Initiative <span className="lt-stat-desc">— likelihood of acting without orders</span></label>
+            <StatInput value={draftStats.initiative} onChange={v => setDraftStats(s => ({ ...s, initiative: v }))} />
+          </div>
+          <div className="lt-edit-field">
+            <label className="lt-edit-label">Discipline <span className="lt-stat-desc">— how literally orders are followed</span></label>
+            <StatInput value={draftStats.discipline} onChange={v => setDraftStats(s => ({ ...s, discipline: v }))} />
+          </div>
+          <div className="lt-edit-field">
+            <label className="lt-edit-label">Communication <span className="lt-stat-desc">— frequency and quality of reports</span></label>
+            <StatInput value={draftStats.communication} onChange={v => setDraftStats(s => ({ ...s, communication: v }))} />
+          </div>
+
+          <div className="lt-edit-actions">
+            <button className="lt-edit-save" onClick={saveEdit}>Apply</button>
+            <button className="lt-edit-cancel" onClick={cancelEdit}>Cancel</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className={`personality ${lt.personality}`}>{lt.personality}</p>
+          <p className="personality-desc">{PERSONALITY_DESCRIPTIONS[lt.personality]}</p>
+
+          {lt.stats && (
+            <div className="lt-stats">
+              <div className="stat-bar">
+                <span className="stat-label">Initiative</span>
+                <div className="stat-track">
+                  <div className="stat-fill" style={{ width: `${(lt.stats.initiative / 10) * 100}%` }} />
+                </div>
+                <span className="stat-value">{lt.stats.initiative}</span>
+              </div>
+              <div className="stat-bar">
+                <span className="stat-label">Discipline</span>
+                <div className="stat-track">
+                  <div className="stat-fill discipline" style={{ width: `${(lt.stats.discipline / 10) * 100}%` }} />
+                </div>
+                <span className="stat-value">{lt.stats.discipline}</span>
+              </div>
+              <div className="stat-bar">
+                <span className="stat-label">Comms</span>
+                <div className="stat-track">
+                  <div className="stat-fill comms" style={{ width: `${(lt.stats.communication / 10) * 100}%` }} />
+                </div>
+                <span className="stat-value">{lt.stats.communication}</span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Squad info with inline stat editing ──────────────────────────────
+function SquadInfoRow({
+  squadId,
+  troops,
+  onUpdateStats,
+}: {
+  squadId: string;
+  troops: TroopInfo[];
+  onUpdateStats: (squadId: string, stats: Partial<TroopStats>) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+
+  const avgStats: TroopStats = {
+    combat: Math.round(troops.reduce((s, t) => s + t.stats.combat, 0) / troops.length * 10) / 10,
+    speed: Math.round(troops.reduce((s, t) => s + t.stats.speed, 0) / troops.length * 10) / 10,
+    courage: Math.round(troops.reduce((s, t) => s + t.stats.courage, 0) / troops.length * 10) / 10,
+    discipline: Math.round(troops.reduce((s, t) => s + t.stats.discipline, 0) / troops.length * 10) / 10,
+  };
+
+  const avgPos = {
+    x: Math.round(troops.reduce((s, t) => s + t.position.x, 0) / troops.length),
+    y: Math.round(troops.reduce((s, t) => s + t.position.y, 0) / troops.length),
+  };
+
+  // Derive compass direction from x coordinate (map is ~400 wide)
+  const compass = avgPos.x < 100 ? 'W (near)' : avgPos.x < 200 ? 'W-center' : avgPos.x < 300 ? 'E-center' : 'E (far)';
+
+  const [draft, setDraft] = useState<TroopStats>({ ...avgStats });
+
+  function startEdit() {
+    setDraft({ ...avgStats });
+    setEditing(true);
+  }
+
+  function saveEdit() {
+    onUpdateStats(squadId, draft);
+    setEditing(false);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+  }
+
+  return (
+    <div className="squad-info">
+      <div className="squad-header">
+        <span className="squad-name">{squadId}</span>
+        <span className="squad-size">{troops.length} units</span>
+        <span className="squad-pos" title={`Map coords: (${avgPos.x}, ${avgPos.y})`}>
+          {compass}
+        </span>
+        {!editing && (
+          <button className="squad-edit-btn" onClick={startEdit} title="Edit squad stats">Edit</button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="squad-edit-stats">
+          {(['combat', 'speed', 'courage', 'discipline'] as const).map(stat => (
+            <div key={stat} className="squad-edit-row">
+              <span className="squad-stat-label">{stat.slice(0, 3).toUpperCase()}</span>
+              <StatInput value={draft[stat]} onChange={v => setDraft(d => ({ ...d, [stat]: v }))} />
+            </div>
+          ))}
+          <div className="squad-edit-actions">
+            <button className="lt-edit-save small" onClick={saveEdit}>Apply</button>
+            <button className="lt-edit-cancel small" onClick={cancelEdit}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="squad-stats">
+          {(['combat', 'speed', 'courage', 'discipline'] as const).map(stat => (
+            <div key={stat} className="squad-stat">
+              <span className="squad-stat-label">{stat.slice(0, 3).toUpperCase()}</span>
+              <div className="squad-stat-bar">
+                <div className={`squad-stat-fill ${stat}`} style={{ width: `${(avgStats[stat] / 10) * 100}%` }} />
+              </div>
+              <span className="squad-stat-value">{avgStats[stat]}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TroopInfoPanel({
+  troops,
+  onUpdateStats,
+}: {
+  troops: TroopInfo[];
+  onUpdateStats: (squadId: string, stats: Partial<TroopStats>) => void;
+}) {
   const squads = new Map<string, TroopInfo[]>();
   for (const troop of troops) {
     const existing = squads.get(troop.squadId) || [];
@@ -51,59 +278,14 @@ function TroopInfoPanel({ troops }: { troops: TroopInfo[] }) {
         <span className="troop-count">{troops.length} troops</span>
         <span className="squad-count">{squads.size} {squads.size === 1 ? 'squad' : 'squads'}</span>
       </div>
-      {Array.from(squads.entries()).map(([squadId, squadTroops]) => {
-        // Average stats for the squad
-        const avgStats = {
-          combat: Math.round(squadTroops.reduce((s, t) => s + t.stats.combat, 0) / squadTroops.length * 10) / 10,
-          speed: Math.round(squadTroops.reduce((s, t) => s + t.stats.speed, 0) / squadTroops.length * 10) / 10,
-          courage: Math.round(squadTroops.reduce((s, t) => s + t.stats.courage, 0) / squadTroops.length * 10) / 10,
-          discipline: Math.round(squadTroops.reduce((s, t) => s + t.stats.discipline, 0) / squadTroops.length * 10) / 10,
-        };
-        const avgPos = {
-          x: Math.round(squadTroops.reduce((s, t) => s + t.position.x, 0) / squadTroops.length),
-          y: Math.round(squadTroops.reduce((s, t) => s + t.position.y, 0) / squadTroops.length),
-        };
-
-        return (
-          <div key={squadId} className="squad-info">
-            <div className="squad-header">
-              <span className="squad-name">{squadId}</span>
-              <span className="squad-size">{squadTroops.length} units</span>
-              <span className="squad-pos">pos ({avgPos.x}, {avgPos.y})</span>
-            </div>
-            <div className="squad-stats">
-              <div className="squad-stat">
-                <span className="squad-stat-label">CMB</span>
-                <div className="squad-stat-bar">
-                  <div className="squad-stat-fill combat" style={{ width: `${(avgStats.combat / 10) * 100}%` }} />
-                </div>
-                <span className="squad-stat-value">{avgStats.combat}</span>
-              </div>
-              <div className="squad-stat">
-                <span className="squad-stat-label">SPD</span>
-                <div className="squad-stat-bar">
-                  <div className="squad-stat-fill speed" style={{ width: `${(avgStats.speed / 10) * 100}%` }} />
-                </div>
-                <span className="squad-stat-value">{avgStats.speed}</span>
-              </div>
-              <div className="squad-stat">
-                <span className="squad-stat-label">CRG</span>
-                <div className="squad-stat-bar">
-                  <div className="squad-stat-fill courage" style={{ width: `${(avgStats.courage / 10) * 100}%` }} />
-                </div>
-                <span className="squad-stat-value">{avgStats.courage}</span>
-              </div>
-              <div className="squad-stat">
-                <span className="squad-stat-label">DSC</span>
-                <div className="squad-stat-bar">
-                  <div className="squad-stat-fill discipline" style={{ width: `${(avgStats.discipline / 10) * 100}%` }} />
-                </div>
-                <span className="squad-stat-value">{avgStats.discipline}</span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      {Array.from(squads.entries()).map(([squadId, squadTroops]) => (
+        <SquadInfoRow
+          key={squadId}
+          squadId={squadId}
+          troops={squadTroops}
+          onUpdateStats={onUpdateStats}
+        />
+      ))}
     </div>
   );
 }
@@ -142,10 +324,7 @@ function BriefingChat({
     }
   };
 
-  // Filter messages for this lieutenant
-  const ltMessages = messages.filter(
-    m => m.from === lieutenant.id || m.to === lieutenant.id
-  );
+  const ltMessages = messages.filter(m => m.from === lieutenant.id || m.to === lieutenant.id);
 
   return (
     <div className="briefing-chat">
@@ -153,6 +332,10 @@ function BriefingChat({
         {ltMessages.length === 0 && (
           <div className="briefing-chat-empty">
             Send a message to brief {lieutenant.name}. You can have a back-and-forth conversation to refine your orders.
+            <br /><br />
+            <span style={{ color: '#666', fontSize: 12 }}>
+              Tip: after briefing, check the Flowchart tab to see and edit the generated rules.
+            </span>
           </div>
         )}
         {ltMessages.map(msg => (
@@ -200,8 +383,11 @@ export function PreBattleScreen({
   troopInfo, scenarioReady,
   gameMode, onGameModeChange, playerPersonality, enemyPersonality,
   onPlayerPersonalityChange, onEnemyPersonalityChange,
+  flowcharts, mapSize,
+  onUpdateLtConfig, onUpdateSquadStats, onUpdateFlowchartNode,
 }: Props) {
   const [selectedLt, setSelectedLt] = useState<string>(lieutenants[0]?.id || 'lt_alpha');
+  const [rightTab, setRightTab] = useState<'brief' | 'flowchart'>('brief');
   const allMessages = messages || [];
 
   const activeLt = lieutenants.find(lt => lt.id === selectedLt) || lieutenants[0];
@@ -211,7 +397,7 @@ export function PreBattleScreen({
       <div className="pre-battle-header">
         <h2>War Room</h2>
         <p className="pre-battle-subtitle">
-          Review your forces and brief your lieutenants before battle.
+          Review your forces, edit configurations, and brief your lieutenants before battle.
         </p>
       </div>
 
@@ -253,7 +439,7 @@ export function PreBattleScreen({
         </button>
       </div>
 
-      {/* Enemy personality selector (both modes use it) */}
+      {/* Enemy personality selector */}
       <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <label style={{ color: '#808090', fontSize: 13 }}>Enemy Commander:</label>
@@ -310,65 +496,77 @@ export function PreBattleScreen({
 
           {activeLt && (
             <div className="war-room-main">
-              {/* Left column: lieutenant info + troops */}
+              {/* Left column: lieutenant config + map + troops */}
               <div className="war-room-info">
-                <div className="war-room-lt-card">
-                  <h3>{activeLt.name}</h3>
-                  <p className={`personality ${activeLt.personality}`}>
-                    {activeLt.personality}
-                  </p>
-                  <p className="personality-desc">
-                    {PERSONALITY_DESCRIPTIONS[activeLt.personality]}
-                  </p>
+                <LieutenantCard lt={activeLt} onUpdateConfig={onUpdateLtConfig} />
 
-                  {activeLt.stats && (
-                    <div className="lt-stats">
-                      <div className="stat-bar">
-                        <span className="stat-label">Initiative</span>
-                        <div className="stat-track">
-                          <div className="stat-fill" style={{ width: `${(activeLt.stats.initiative / 10) * 100}%` }} />
-                        </div>
-                        <span className="stat-value">{activeLt.stats.initiative}</span>
-                      </div>
-                      <div className="stat-bar">
-                        <span className="stat-label">Discipline</span>
-                        <div className="stat-track">
-                          <div className="stat-fill discipline" style={{ width: `${(activeLt.stats.discipline / 10) * 100}%` }} />
-                        </div>
-                        <span className="stat-value">{activeLt.stats.discipline}</span>
-                      </div>
-                      <div className="stat-bar">
-                        <span className="stat-label">Comms</span>
-                        <div className="stat-track">
-                          <div className="stat-fill comms" style={{ width: `${(activeLt.stats.communication / 10) * 100}%` }} />
-                        </div>
-                        <span className="stat-value">{activeLt.stats.communication}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                {/* Minimap */}
+                {scenarioReady && troopInfo && Object.keys(troopInfo).length > 0 && (
+                  <div className="war-room-map-section">
+                    <MapPreview
+                      mapWidth={mapSize.width}
+                      mapHeight={mapSize.height}
+                      troopInfo={troopInfo}
+                      lieutenants={lieutenants}
+                    />
+                  </div>
+                )}
 
                 {/* Troop info */}
                 <div className="war-room-troops-section">
                   <h4>Forces Under Command</h4>
                   {troopInfo && troopInfo[activeLt.id] ? (
-                    <TroopInfoPanel troops={troopInfo[activeLt.id]} />
+                    <TroopInfoPanel
+                      troops={troopInfo[activeLt.id]}
+                      onUpdateStats={onUpdateSquadStats}
+                    />
                   ) : (
                     <div className="troop-info-loading">Loading troop data...</div>
                   )}
                 </div>
               </div>
 
-              {/* Right column: conversation */}
+              {/* Right column: tabbed Brief / Flowchart */}
               <div className="war-room-comms">
-                <h4>Briefing</h4>
-                <BriefingChat
-                  lieutenant={activeLt}
-                  messages={allMessages}
-                  onSend={(msg) => onSendBrief(activeLt.id, msg)}
-                  placeholder={BRIEFING_PLACEHOLDERS[activeLt.personality] || 'Give your orders...'}
-                  disabled={isInitializing || !scenarioReady}
-                />
+                <div className="war-room-right-tabs">
+                  <button
+                    className={`wr-tab ${rightTab === 'brief' ? 'active' : ''}`}
+                    onClick={() => setRightTab('brief')}
+                  >
+                    Briefing
+                  </button>
+                  <button
+                    className={`wr-tab ${rightTab === 'flowchart' ? 'active' : ''}`}
+                    onClick={() => setRightTab('flowchart')}
+                  >
+                    Flowchart
+                    {flowcharts[activeLt.id]?.nodes?.length ? (
+                      <span className="wr-tab-badge">{flowcharts[activeLt.id].nodes.length}</span>
+                    ) : null}
+                  </button>
+                </div>
+
+                {rightTab === 'brief' ? (
+                  <BriefingChat
+                    lieutenant={activeLt}
+                    messages={allMessages}
+                    onSend={(msg) => onSendBrief(activeLt.id, msg)}
+                    placeholder={BRIEFING_PLACEHOLDERS[activeLt.personality] || 'Give your orders...'}
+                    disabled={isInitializing || !scenarioReady}
+                  />
+                ) : (
+                  <div className="war-room-flowchart-pane">
+                    <FlowchartEditor
+                      flowchart={flowcharts[activeLt.id]}
+                      lieutenantName={activeLt.name}
+                      mapWidth={mapSize.width}
+                      mapHeight={mapSize.height}
+                      onUpdateNode={(op, node, nodeId) =>
+                        onUpdateFlowchartNode(activeLt.id, op, node, nodeId)
+                      }
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}

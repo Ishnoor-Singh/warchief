@@ -105,3 +105,12 @@ export interface DetailedBattleSummary {
 }
 
 export type GameMode = 'human_vs_ai' | 'ai_vs_ai';
+
+// Battle events for the event ticker
+export interface BattleEvent {
+  type: 'kill' | 'engagement' | 'retreat' | 'squad_wiped' | 'casualty_milestone';
+  tick: number;
+  team: Team;
+  message: string;
+  position?: Vec2;
+}

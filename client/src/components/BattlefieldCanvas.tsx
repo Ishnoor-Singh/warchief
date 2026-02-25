@@ -3,6 +3,7 @@ import type { BattleState, VisibilityZone, Lieutenant } from '../types';
 
 interface Props {
   battleState: BattleState;
+  prevBattleState: BattleState;
   selectedLieutenant: string | null;
   lieutenants: Lieutenant[];
 }
@@ -10,7 +11,6 @@ interface Props {
 const SCALE = 2;
 
 // Distinct color palettes per lieutenant (for player side)
-// Each lieutenant gets a unique hue so their troops are visually grouped
 const LIEUTENANT_COLORS: string[] = [
   '#4a9eff', // blue (Alpha)
   '#6bff6b', // green (Bravo)
@@ -18,7 +18,6 @@ const LIEUTENANT_COLORS: string[] = [
   '#ffaa4a', // orange (fallback)
 ];
 
-// Dimmed versions for troops (slightly less saturated)
 const LIEUTENANT_TROOP_COLORS: string[] = [
   '#3a7ecc', // dimmer blue
   '#4ecc4e', // dimmer green
@@ -28,9 +27,63 @@ const LIEUTENANT_TROOP_COLORS: string[] = [
 
 const ENEMY_COLOR = '#ff4a4a';
 const ENEMY_DIM_COLOR = '#cc3a3a';
+const COMBAT_RANGE = 25;
 
-export function BattlefieldCanvas({ battleState, selectedLieutenant, lieutenants }: Props) {
+// VFX state stored outside React to avoid re-renders
+interface VFXEffect {
+  type: 'death' | 'hit' | 'combat_flash';
+  x: number;
+  y: number;
+  startTime: number;
+  duration: number;
+  team: string;
+}
+
+const vfxEffects: VFXEffect[] = [];
+
+export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieutenant, lieutenants }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animFrameRef = useRef<number>(0);
+
+  // Detect new deaths and combat hits by diffing state
+  useEffect(() => {
+    const now = Date.now();
+    const prevAgentMap = new Map(prevBattleState.agents.map(a => [a.id, a]));
+
+    for (const agent of battleState.agents) {
+      const prev = prevAgentMap.get(agent.id);
+      if (!prev) continue;
+
+      // Death effect
+      if (prev.alive && !agent.alive) {
+        vfxEffects.push({
+          type: 'death',
+          x: agent.position.x * SCALE,
+          y: agent.position.y * SCALE,
+          startTime: now,
+          duration: 1200,
+          team: agent.team,
+        });
+      }
+
+      // Hit flash (health dropped)
+      if (agent.alive && prev.health > agent.health) {
+        vfxEffects.push({
+          type: 'hit',
+          x: agent.position.x * SCALE,
+          y: agent.position.y * SCALE,
+          startTime: now,
+          duration: 300,
+          team: agent.team,
+        });
+      }
+    }
+
+    // Cap VFX list size
+    if (vfxEffects.length > 200) {
+      vfxEffects.splice(0, vfxEffects.length - 100);
+    }
+  }, [battleState, prevBattleState]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -39,207 +92,299 @@ export function BattlefieldCanvas({ battleState, selectedLieutenant, lieutenants
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const w = canvas.width;
-    const h = canvas.height;
+    function draw() {
+      if (!ctx || !canvas) return;
 
-    // Build lieutenant index → color mapping
-    const ltColorMap = new Map<string, { lt: string; troop: string }>();
-    lieutenants.forEach((lt, i) => {
-      ltColorMap.set(lt.id, {
-        lt: LIEUTENANT_COLORS[i] || LIEUTENANT_COLORS[LIEUTENANT_COLORS.length - 1]!,
-        troop: LIEUTENANT_TROOP_COLORS[i] || LIEUTENANT_TROOP_COLORS[LIEUTENANT_TROOP_COLORS.length - 1]!,
-      });
-    });
+      const w = canvas.width;
+      const h = canvas.height;
+      const now = Date.now();
 
-    // Build a lookup: lieutenant id → name
-    const ltNameMap = new Map<string, string>();
-    for (const lt of lieutenants) {
-      ltNameMap.set(lt.id, lt.name);
-    }
-
-    // Clear
-    ctx.fillStyle = '#0d1117';
-    ctx.fillRect(0, 0, w, h);
-
-    // Draw grid
-    ctx.strokeStyle = '#1a1a2e';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < w; x += 50) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, h);
-      ctx.stroke();
-    }
-    for (let y = 0; y < h; y += 50) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-    }
-
-    // Draw fog of war
-    const zones = battleState.visibilityZones;
-    if (zones && zones.length > 0) {
-      drawFogOfWar(ctx, w, h, zones);
-    }
-
-    // Collect lieutenant positions for drawing connection lines
-    const ltPositions = new Map<string, { x: number; y: number }>();
-    for (const agent of battleState.agents) {
-      if (!agent.alive) continue;
-      if (agent.type === 'lieutenant') {
-        ltPositions.set(agent.id, {
-          x: agent.position.x * SCALE,
-          y: agent.position.y * SCALE,
+      // Build lieutenant index -> color mapping
+      const ltColorMap = new Map<string, { lt: string; troop: string }>();
+      lieutenants.forEach((lt, i) => {
+        ltColorMap.set(lt.id, {
+          lt: LIEUTENANT_COLORS[i] || LIEUTENANT_COLORS[LIEUTENANT_COLORS.length - 1]!,
+          troop: LIEUTENANT_TROOP_COLORS[i] || LIEUTENANT_TROOP_COLORS[LIEUTENANT_TROOP_COLORS.length - 1]!,
         });
+      });
+
+      const ltNameMap = new Map<string, string>();
+      for (const lt of lieutenants) {
+        ltNameMap.set(lt.id, lt.name);
       }
-    }
 
-    // Draw faint connection lines from troops to their lieutenant (only for selected lt)
-    if (selectedLieutenant) {
-      const ltPos = ltPositions.get(selectedLieutenant);
-      if (ltPos) {
-        for (const agent of battleState.agents) {
-          if (!agent.alive || agent.type !== 'troop') continue;
-          if (agent.lieutenantId !== selectedLieutenant) continue;
+      // Clear
+      ctx.fillStyle = '#0d1117';
+      ctx.fillRect(0, 0, w, h);
 
-          const tx = agent.position.x * SCALE;
-          const ty = agent.position.y * SCALE;
+      // Draw grid
+      ctx.strokeStyle = '#1a1a2e';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < w; x += 50) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+      for (let y = 0; y < h; y += 50) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+
+      // Draw fog of war
+      const zones = battleState.visibilityZones;
+      if (zones && zones.length > 0) {
+        drawFogOfWar(ctx, w, h, zones);
+      }
+
+      // Collect lieutenant positions for drawing connection lines
+      const ltPositions = new Map<string, { x: number; y: number }>();
+      for (const agent of battleState.agents) {
+        if (!agent.alive) continue;
+        if (agent.type === 'lieutenant') {
+          ltPositions.set(agent.id, {
+            x: agent.position.x * SCALE,
+            y: agent.position.y * SCALE,
+          });
+        }
+      }
+
+      // Draw faint connection lines from troops to their lieutenant (only for selected lt)
+      if (selectedLieutenant) {
+        const ltPos = ltPositions.get(selectedLieutenant);
+        if (ltPos) {
+          for (const agent of battleState.agents) {
+            if (!agent.alive || agent.type !== 'troop') continue;
+            if (agent.lieutenantId !== selectedLieutenant) continue;
+
+            const tx = agent.position.x * SCALE;
+            const ty = agent.position.y * SCALE;
+
+            ctx.beginPath();
+            ctx.moveTo(ltPos.x, ltPos.y);
+            ctx.lineTo(tx, ty);
+            ctx.strokeStyle = (ltColorMap.get(selectedLieutenant)?.lt || '#4a9eff');
+            ctx.globalAlpha = 0.12;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
+        }
+      }
+
+      // Draw combat engagement lines between fighting units
+      const aliveAgents = battleState.agents.filter(a => a.alive);
+      for (let i = 0; i < aliveAgents.length; i++) {
+        for (let j = i + 1; j < aliveAgents.length; j++) {
+          const a = aliveAgents[i]!;
+          const b = aliveAgents[j]!;
+          if (a.team === b.team) continue;
+
+          const dx = a.position.x - b.position.x;
+          const dy = a.position.y - b.position.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist <= COMBAT_RANGE) {
+            const ax = a.position.x * SCALE;
+            const ay = a.position.y * SCALE;
+            const bx = b.position.x * SCALE;
+            const by = b.position.y * SCALE;
+
+            // Pulsing red line between combatants
+            const pulse = 0.3 + Math.sin(now / 150) * 0.15;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+            ctx.strokeStyle = '#ff4a4a';
+            ctx.globalAlpha = pulse;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
+        }
+      }
+
+      // Draw agents
+      for (const agent of battleState.agents) {
+        if (!agent.alive) continue;
+
+        const x = agent.position.x * SCALE;
+        const y = agent.position.y * SCALE;
+
+        const isLt = agent.type === 'lieutenant';
+        const radius = isLt ? 8 : 5;
+        const isPlayer = agent.team === 'player';
+
+        let baseColor: string;
+        if (!isPlayer) {
+          baseColor = isLt ? ENEMY_COLOR : ENEMY_DIM_COLOR;
+        } else if (isLt) {
+          baseColor = ltColorMap.get(agent.id)?.lt || '#4a9eff';
+        } else {
+          baseColor = ltColorMap.get(agent.lieutenantId || '')?.troop || '#3a7ecc';
+        }
+
+        const isSelectedGroup = !selectedLieutenant
+          || agent.id === selectedLieutenant
+          || agent.lieutenantId === selectedLieutenant;
+
+        const healthRatio = agent.health / agent.maxHealth;
+        const selectionDim = isSelectedGroup ? 1.0 : 0.35;
+        ctx.globalAlpha = (0.3 + (healthRatio * 0.7)) * selectionDim;
+
+        // Formation indicator
+        drawFormationIndicator(ctx, x, y, agent.formation, baseColor, radius);
+
+        // Lieutenant: draw diamond shape
+        if (isLt) {
+          ctx.beginPath();
+          ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
+          ctx.strokeStyle = baseColor;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
 
           ctx.beginPath();
-          ctx.moveTo(ltPos.x, ltPos.y);
-          ctx.lineTo(tx, ty);
-          ctx.strokeStyle = (ltColorMap.get(selectedLieutenant)?.lt || '#4a9eff');
-          ctx.globalAlpha = 0.12;
-          ctx.lineWidth = 1;
+          ctx.moveTo(x, y - radius);
+          ctx.lineTo(x + radius, y);
+          ctx.lineTo(x, y + radius);
+          ctx.lineTo(x - radius, y);
+          ctx.closePath();
+          ctx.fillStyle = baseColor;
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.fillStyle = baseColor;
+          ctx.fill();
+        }
+
+        // Action indicator border
+        if (agent.currentAction === 'engaging') {
+          ctx.strokeStyle = '#ff6b6b';
+          ctx.lineWidth = 2;
           ctx.stroke();
+        } else if (agent.currentAction === 'moving' || agent.currentAction === 'falling_back') {
+          ctx.strokeStyle = '#ffaa4a';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+
+        ctx.globalAlpha = 1;
+
+        // Lieutenant name label
+        if (isLt && isPlayer) {
+          const name = ltNameMap.get(agent.id) || agent.id;
+          ctx.font = 'bold 10px Inter, sans-serif';
+          ctx.fillStyle = baseColor;
+          ctx.textAlign = 'center';
+          ctx.globalAlpha = isSelectedGroup ? 0.9 : 0.3;
+          ctx.fillText(name, x, y - radius - 8);
+          ctx.globalAlpha = 1;
+          ctx.textAlign = 'start';
+        }
+
+        // Health bar for damaged units
+        if (healthRatio < 1) {
+          const barWidth = radius * 2;
+          const barHeight = 2;
+          const barX = x - radius;
+          const barY = y - radius - (isLt && isPlayer ? 16 : 4);
+
+          ctx.fillStyle = '#333';
+          ctx.fillRect(barX, barY, barWidth, barHeight);
+
+          ctx.fillStyle = healthRatio > 0.5 ? '#4aff6a' : healthRatio > 0.25 ? '#ffaa4a' : '#ff4a4a';
+          ctx.fillRect(barX, barY, barWidth * healthRatio, barHeight);
+        }
+      }
+
+      // Draw VFX effects
+      for (let i = vfxEffects.length - 1; i >= 0; i--) {
+        const fx = vfxEffects[i]!;
+        const elapsed = now - fx.startTime;
+        if (elapsed > fx.duration) {
+          vfxEffects.splice(i, 1);
+          continue;
+        }
+
+        const progress = elapsed / fx.duration;
+
+        if (fx.type === 'death') {
+          // Expanding ring + fade
+          const ringRadius = 8 + progress * 20;
+          const alpha = (1 - progress) * 0.7;
+          ctx.beginPath();
+          ctx.arc(fx.x, fx.y, ringRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = fx.team === 'player' ? '#4a9eff' : '#ff4a4a';
+          ctx.lineWidth = 2 * (1 - progress);
+          ctx.globalAlpha = alpha;
+          ctx.stroke();
+
+          // X mark at death location
+          if (progress < 0.8) {
+            const xAlpha = (1 - progress / 0.8) * 0.5;
+            ctx.globalAlpha = xAlpha;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.5;
+            const s = 4;
+            ctx.beginPath();
+            ctx.moveTo(fx.x - s, fx.y - s);
+            ctx.lineTo(fx.x + s, fx.y + s);
+            ctx.moveTo(fx.x + s, fx.y - s);
+            ctx.lineTo(fx.x - s, fx.y + s);
+            ctx.stroke();
+          }
+
+          ctx.globalAlpha = 1;
+        } else if (fx.type === 'hit') {
+          // Quick white flash
+          const alpha = (1 - progress) * 0.8;
+          const flashRadius = 6 + progress * 4;
+          ctx.beginPath();
+          ctx.arc(fx.x, fx.y, flashRadius, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.globalAlpha = alpha;
+          ctx.fill();
           ctx.globalAlpha = 1;
         }
       }
-    }
 
-    // Draw agents
-    for (const agent of battleState.agents) {
-      if (!agent.alive) continue;
+      // Legend
+      ctx.font = '12px Inter, sans-serif';
+      ctx.textAlign = 'start';
 
-      const x = agent.position.x * SCALE;
-      const y = agent.position.y * SCALE;
-
-      const isLt = agent.type === 'lieutenant';
-      const radius = isLt ? 8 : 5;
-      const isPlayer = agent.team === 'player';
-
-      // Determine color based on team and lieutenant assignment
-      let baseColor: string;
-      if (!isPlayer) {
-        baseColor = isLt ? ENEMY_COLOR : ENEMY_DIM_COLOR;
-      } else if (isLt) {
-        baseColor = ltColorMap.get(agent.id)?.lt || '#4a9eff';
-      } else {
-        baseColor = ltColorMap.get(agent.lieutenantId || '')?.troop || '#3a7ecc';
-      }
-
-      // Dim units not belonging to the selected lieutenant
-      const isSelectedGroup = !selectedLieutenant
-        || agent.id === selectedLieutenant
-        || agent.lieutenantId === selectedLieutenant;
-
-      const healthRatio = agent.health / agent.maxHealth;
-      const selectionDim = isSelectedGroup ? 1.0 : 0.35;
-      ctx.globalAlpha = (0.3 + (healthRatio * 0.7)) * selectionDim;
-
-      // Formation indicator
-      drawFormationIndicator(ctx, x, y, agent.formation, baseColor, radius);
-
-      // Lieutenant: draw diamond shape instead of circle
-      if (isLt) {
-        // Outer glow ring for lieutenants
-        ctx.beginPath();
-        ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
-        ctx.strokeStyle = baseColor;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Diamond shape
-        ctx.beginPath();
-        ctx.moveTo(x, y - radius);
-        ctx.lineTo(x + radius, y);
-        ctx.lineTo(x, y + radius);
-        ctx.lineTo(x - radius, y);
-        ctx.closePath();
-        ctx.fillStyle = baseColor;
-        ctx.fill();
-      } else {
-        // Troop: circle
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = baseColor;
-        ctx.fill();
-      }
-
-      // Action indicator border
-      if (agent.currentAction === 'engaging') {
-        ctx.strokeStyle = '#ff6b6b';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      } else if (agent.currentAction === 'moving' || agent.currentAction === 'falling_back') {
-        ctx.strokeStyle = '#ffaa4a';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-
-      ctx.globalAlpha = 1;
-
-      // Lieutenant name label
-      if (isLt && isPlayer) {
-        const name = ltNameMap.get(agent.id) || agent.id;
-        ctx.font = 'bold 10px Inter, sans-serif';
-        ctx.fillStyle = baseColor;
-        ctx.textAlign = 'center';
-        ctx.globalAlpha = isSelectedGroup ? 0.9 : 0.3;
-        ctx.fillText(name, x, y - radius - 8);
-        ctx.globalAlpha = 1;
-        ctx.textAlign = 'start';
-      }
-
-      // Health bar for damaged units
-      if (healthRatio < 1) {
-        const barWidth = radius * 2;
-        const barHeight = 2;
-        const barX = x - radius;
-        const barY = y - radius - (isLt && isPlayer ? 16 : 4);
-
-        ctx.fillStyle = '#333';
-        ctx.fillRect(barX, barY, barWidth, barHeight);
-
-        ctx.fillStyle = healthRatio > 0.5 ? '#4aff6a' : healthRatio > 0.25 ? '#ffaa4a' : '#ff4a4a';
-        ctx.fillRect(barX, barY, barWidth * healthRatio, barHeight);
-      }
-    }
-
-    // Legend
-    ctx.font = '12px Inter, sans-serif';
-    ctx.textAlign = 'start';
-
-    let legendY = h - 10;
-    // Enemy legend
-    ctx.fillStyle = ENEMY_COLOR;
-    ctx.fillText('● Enemy', 10, legendY);
-    legendY -= 18;
-
-    // Lieutenant legends (in reverse so first lt is closest to bottom)
-    for (let i = lieutenants.length - 1; i >= 0; i--) {
-      const lt = lieutenants[i]!;
-      const color = LIEUTENANT_COLORS[i] || LIEUTENANT_COLORS[LIEUTENANT_COLORS.length - 1]!;
-      ctx.fillStyle = color;
-      ctx.fillText(`◆ ${lt.name}`, 10, legendY);
+      let legendY = h - 10;
+      ctx.fillStyle = ENEMY_COLOR;
+      ctx.fillText('\u25CF Enemy', 10, legendY);
       legendY -= 18;
+
+      for (let i = lieutenants.length - 1; i >= 0; i--) {
+        const lt = lieutenants[i]!;
+        const color = LIEUTENANT_COLORS[i] || LIEUTENANT_COLORS[LIEUTENANT_COLORS.length - 1]!;
+        ctx.fillStyle = color;
+        ctx.fillText(`\u25C6 ${lt.name}`, 10, legendY);
+        legendY -= 18;
+      }
+
+      ctx.fillStyle = '#808090';
+      ctx.font = '11px JetBrains Mono, monospace';
+      ctx.fillText(`Tick ${battleState.tick}`, w - 80, h - 10);
+
+      // Continue animation loop for VFX
+      if (vfxEffects.length > 0 || battleState.running) {
+        animFrameRef.current = requestAnimationFrame(draw);
+      }
     }
 
-    ctx.fillStyle = '#808090';
-    ctx.font = '11px JetBrains Mono, monospace';
-    ctx.fillText(`Tick ${battleState.tick}`, w - 80, h - 10);
+    // Cancel previous frame and start new
+    cancelAnimationFrame(animFrameRef.current);
+    draw();
 
+    return () => {
+      cancelAnimationFrame(animFrameRef.current);
+    };
   }, [battleState, selectedLieutenant, lieutenants]);
 
   return (

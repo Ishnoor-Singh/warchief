@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { BattlefieldCanvas } from './components/BattlefieldCanvas';
 import { MessagePanel } from './components/MessagePanel';
 import { FlowchartPanel } from './components/FlowchartPanel';
@@ -7,8 +7,10 @@ import { SetupScreen } from './components/SetupScreen';
 import { EndScreen } from './components/EndScreen';
 import { LandingScreen } from './components/LandingScreen';
 import { InstructionsScreen } from './components/InstructionsScreen';
+import { ArmyStrengthHUD } from './components/ArmyStrengthHUD';
+import { BattleEventTicker } from './components/BattleEventTicker';
 import { useWebSocket } from './hooks/useWebSocket';
-import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode, TroopInfo } from './types';
+import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode, BattleEvent, TroopInfo } from './types';
 import './App.css';
 
 type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle';
@@ -41,6 +43,8 @@ function App() {
   const [flowcharts, setFlowcharts] = useState<Record<string, Flowchart>>({});
   const [selectedLieutenant, setSelectedLieutenant] = useState<string | null>(null);
   const [battleSummary, setBattleSummary] = useState<DetailedBattleSummary | null>(null);
+  const [battleEvents, setBattleEvents] = useState<BattleEvent[]>([]);
+  const [speed, setSpeed] = useState(1);
 
   // Setup state
   const [models, setModels] = useState<Model[]>([]);
@@ -67,6 +71,8 @@ function App() {
   // Track game mode for use in callbacks
   const gameModeRef = useRef<GameMode>(gameMode);
   gameModeRef.current = gameMode;
+  // Track previous battle state for VFX diffing
+  const prevBattleStateRef = useRef<BattleState>(emptyBattleState);
 
   // Handle WebSocket messages
   const handleWSMessage = useCallback((msg: unknown) => {
@@ -132,7 +138,10 @@ function App() {
 
       case 'state': {
         const data = message.data as BattleState;
-        setBattleState(data);
+        setBattleState(prev => {
+          prevBattleStateRef.current = prev;
+          return data;
+        });
         break;
       }
 
@@ -145,6 +154,18 @@ function App() {
       case 'flowchart': {
         const data = message.data as { lieutenantId: string; flowcharts: Record<string, Flowchart> };
         setFlowcharts(prev => ({ ...prev, ...data.flowcharts }));
+        break;
+      }
+
+      case 'battle_event': {
+        const data = message.data as BattleEvent;
+        setBattleEvents(prev => [...prev, data]);
+        break;
+      }
+
+      case 'speed_set': {
+        const data = message.data as { speed: number };
+        setSpeed(data.speed);
         break;
       }
 
@@ -227,6 +248,7 @@ function App() {
   const handleStartBattle = useCallback(() => {
     setIsInitializing(true);
     pendingBattleStart.current = true;
+    setBattleEvents([]);
     send({
       type: 'init_battle',
       data: {
@@ -249,6 +271,11 @@ function App() {
     }
   }, [send, isPaused]);
 
+  const handleSetSpeed = useCallback((newSpeed: number) => {
+    send({ type: 'set_speed', data: { speed: newSpeed } });
+    setSpeed(newSpeed);
+  }, [send]);
+
   const handleSendOrder = useCallback((lieutenantId: string, order: string) => {
     send({ type: 'send_order', data: { lieutenantId, order } });
   }, [send]);
@@ -259,13 +286,30 @@ function App() {
     setFlowcharts({});
     setBattleState(emptyBattleState);
     setBattleSummary(null);
+    setBattleEvents([]);
+    setSpeed(1);
     setTroopInfo({});
     setScenarioReady(false);
     scenarioInitRef.current = false;
   }, []);
 
+  // Compute troop counts per lieutenant
+  const troopCounts = useMemo(() => {
+    const counts: Record<string, { alive: number; total: number }> = {};
+    for (const lt of lieutenants) {
+      const ltTroops = battleState.agents.filter(
+        a => a.type === 'troop' && a.lieutenantId === lt.id
+      );
+      counts[lt.id] = {
+        alive: ltTroops.filter(a => a.alive).length,
+        total: ltTroops.length,
+      };
+    }
+    return counts;
+  }, [lieutenants, battleState.agents]);
+
   // Connection status indicator
-  const connectionStatus = status === 'connected' ? '🟢' : status === 'connecting' ? '🟡' : '🔴';
+  const connectionStatus = status === 'connected' ? '\u{1F7E2}' : status === 'connecting' ? '\u{1F7E1}' : '\u{1F534}';
 
   const isAiVsAi = gameMode === 'ai_vs_ai';
 
@@ -283,10 +327,21 @@ function App() {
             <>
               <span className="tick">Tick: {battleState.tick}</span>
               <span className={`status ${battleState.running ? 'running' : 'paused'}`}>
-                {battleState.running ? '● LIVE' : '◯ PAUSED'}
+                {battleState.running ? '\u25CF LIVE' : '\u25CB PAUSED'}
               </span>
+              <div className="speed-controls">
+                {[0.5, 1, 2].map(s => (
+                  <button
+                    key={s}
+                    className={`speed-btn ${speed === s ? 'active' : ''}`}
+                    onClick={() => handleSetSpeed(s)}
+                  >
+                    {s}x
+                  </button>
+                ))}
+              </div>
               <button className="pause-button" onClick={handlePauseBattle}>
-                {isPaused ? '▶ Resume' : '⏸ Pause'}
+                {isPaused ? '\u25B6 Resume' : '\u23F8 Pause'}
               </button>
             </>
           )}
@@ -349,17 +404,21 @@ function App() {
       ) : (
         <main className="battle-layout">
           <div className="left-panel">
+            <ArmyStrengthHUD agents={battleState.agents} />
             <BattlefieldCanvas
               battleState={battleState}
+              prevBattleState={prevBattleStateRef.current}
               selectedLieutenant={selectedLieutenant}
               lieutenants={lieutenants}
             />
+            <BattleEventTicker events={battleEvents} />
           </div>
 
           <div className="right-panel">
             <div className="lieutenants-bar">
               {lieutenants.map(lt => {
                 const hasFlowchart = flowcharts[lt.id] && flowcharts[lt.id]!.nodes.length > 0;
+                const counts = troopCounts[lt.id];
                 return (
                   <button
                     key={lt.id}
@@ -368,6 +427,17 @@ function App() {
                   >
                     <span className="lt-name">{lt.name}</span>
                     <span className={`lt-personality ${lt.personality}`}>{lt.personality}</span>
+                    {counts && counts.total > 0 && (
+                      <div className="lt-troop-count">
+                        <div className="lt-troop-bar">
+                          <div
+                            className="lt-troop-fill"
+                            style={{ width: `${(counts.alive / counts.total) * 100}%` }}
+                          />
+                        </div>
+                        <span className="lt-troop-numbers">{counts.alive}/{counts.total}</span>
+                      </div>
+                    )}
                     {lt.busy && <span className="lt-busy">...</span>}
                     {hasFlowchart && <span className="lt-flowchart-indicator" title="Has active flowchart">FC</span>}
                   </button>

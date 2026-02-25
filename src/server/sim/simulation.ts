@@ -1,15 +1,16 @@
 // Core simulation loop for Warchief
 // Runs at 10 ticks/second, processes events, resolves combat
 
-import { 
-  Vec2, 
-  BattleState, 
-  AgentState, 
+import {
+  Vec2,
+  BattleState,
+  AgentState,
   TroopAgent,
   Team,
   CombatResult,
   VisibleEnemy,
-  TroopStats
+  TroopStats,
+  FormationType,
 } from '../../shared/types/index.js';
 import {
   GameEvent,
@@ -244,6 +245,13 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
       
     case 'setFormation':
       agent.formation = action.formation;
+      // Reposition this troop to its slot in the formation around their lieutenant
+      if (agent.type === 'troop' && agent.lieutenantId) {
+        const lt = state.battle.agents.get(agent.lieutenantId);
+        if (lt?.alive) {
+          repositionInFormation(state, agent, action.formation, lt.position);
+        }
+      }
       break;
       
     case 'requestSupport':
@@ -254,6 +262,76 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
       state.callbacks.onTroopMessage?.(agentId, action.eventType, action.message);
       break;
   }
+}
+
+// Compute where a single troop should stand in a formation around a lieutenant
+function computeFormationSlot(formation: FormationType, ltPos: Vec2, index: number, total: number): Vec2 {
+  const spacing = 15;
+
+  switch (formation) {
+    case 'line': {
+      // Horizontal line centered on the lieutenant, 30 units in front
+      const startX = ltPos.x - ((total - 1) * spacing) / 2;
+      return { x: startX + index * spacing, y: ltPos.y + 30 };
+    }
+    case 'column': {
+      // Single file extending forward from the lieutenant
+      return { x: ltPos.x, y: ltPos.y + 20 + index * spacing };
+    }
+    case 'wedge': {
+      // V-shape pointing forward: pairs fan out to left/right with each row
+      const row = Math.floor(index / 2);
+      const side = index % 2 === 0 ? -1 : 1;
+      return { x: ltPos.x + side * row * spacing, y: ltPos.y + 20 + row * spacing };
+    }
+    case 'defensive_circle': {
+      // Ring of troops around the lieutenant
+      const radius = Math.max(30, (total * spacing) / (2 * Math.PI));
+      const angle = (index / total) * 2 * Math.PI;
+      return { x: ltPos.x + Math.cos(angle) * radius, y: ltPos.y + Math.sin(angle) * radius };
+    }
+    case 'scatter': {
+      // Loose grid spread around the lieutenant
+      const cols = Math.ceil(Math.sqrt(total));
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+      return {
+        x: ltPos.x - (cols * spacing) / 2 + col * spacing * 1.5,
+        y: ltPos.y - (Math.ceil(total / cols) * spacing) / 2 + row * spacing * 1.5,
+      };
+    }
+    case 'pincer': {
+      // Two flanking groups — left half and right half of troops
+      const half = Math.ceil(total / 2);
+      if (index < half) {
+        return { x: ltPos.x - 40, y: ltPos.y + (index - half / 2) * spacing };
+      } else {
+        const i = index - half;
+        return { x: ltPos.x + 40, y: ltPos.y + (i - (total - half) / 2) * spacing };
+      }
+    }
+  }
+}
+
+// Set a troop's target position to its slot in a formation around the lieutenant
+function repositionInFormation(
+  state: SimulationState,
+  agent: AgentState,
+  formation: FormationType,
+  ltPos: Vec2
+): void {
+  // All alive troops under the same lieutenant, sorted for stable slot assignment
+  const teammates = Array.from(state.battle.agents.values())
+    .filter(a => a.type === 'troop' && a.lieutenantId === agent.lieutenantId && a.alive)
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const index = teammates.findIndex(a => a.id === agent.id);
+  if (index === -1) return;
+
+  const pos = computeFormationSlot(formation, ltPos, index, teammates.length);
+  agent.targetPosition = pos;
+  agent.currentAction = 'moving';
+  agent.targetId = null;
 }
 
 // Update agent positions based on their targets

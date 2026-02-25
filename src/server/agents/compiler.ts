@@ -70,19 +70,20 @@ function compileDirectiveForUnit(
 // Compile all directives from lieutenant output
 export function compileDirectives(
   output: LieutenantOutput,
-  availableUnits: string[]
+  availableUnits: string[],
+  lieutenantId?: string  // when provided, self_directives are compiled for the lieutenant's own runtime
 ): CompiledFlowcharts {
   const flowcharts: Record<string, Flowchart> = {};
   const errors: string[] = [];
-  
+
   for (const directive of output.directives) {
     const targetUnits = resolveUnitPattern(directive.unit, availableUnits);
-    
+
     if (targetUnits.length === 0) {
       errors.push(`No units matched pattern: ${directive.unit}`);
       continue;
     }
-    
+
     for (const unitId of targetUnits) {
       flowcharts[unitId] = compileDirectiveForUnit(
         directive,
@@ -91,7 +92,18 @@ export function compileDirectives(
       );
     }
   }
-  
+
+  // Compile self_directives into the lieutenant's own flowchart
+  if (lieutenantId && output.self_directives?.length) {
+    for (const directive of output.self_directives) {
+      flowcharts[lieutenantId] = compileDirectiveForUnit(
+        directive,
+        lieutenantId,
+        flowcharts[lieutenantId]
+      );
+    }
+  }
+
   return { flowcharts, errors };
 }
 

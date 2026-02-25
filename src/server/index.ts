@@ -15,6 +15,7 @@ import { VisibleUnitInfo, VisibleEnemyInfo } from './agents/input-builder.js';
 import { compileDirectives, applyFlowcharts } from './agents/compiler.js';
 import { createAICommander, generateCommanderOrders, AICommander } from './agents/ai-commander.js';
 import { Flowchart, FlowchartNode, createPersonalityFlowchart } from './runtime/flowchart.js';
+import { type TroopAgent, type TroopStats } from '../shared/types/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -241,10 +242,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
       break;
     }
 
-    case 'init_battle': {
-      const { scenario, briefings, gameMode, playerPersonality, enemyPersonality } = message.data as {
-        scenario: 'basic' | 'assault';
-        briefings: Record<string, string>;
+    case 'init_scenario': {
+      // Initialize the scenario, create lieutenants and troops, but don't start the battle.
+      // This allows the player to see troop info and have conversational briefings.
+      const { scenario, gameMode, playerPersonality, enemyPersonality } = message.data as {
+        scenario?: 'basic' | 'assault';
         gameMode?: GameMode;
         playerPersonality?: 'aggressive' | 'cautious' | 'balanced';
         enemyPersonality?: 'aggressive' | 'cautious' | 'balanced';
@@ -255,7 +257,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
 
       // Create scenario
-      const scenarioData = scenario === 'assault' ? createAssaultScenario() : createBasicScenario();
+      const scenarioData = (scenario || 'basic') === 'assault' ? createAssaultScenario() : createBasicScenario();
 
       // Create simulation with message routing callbacks
       session.simulation = createSimulation(
@@ -265,13 +267,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
         scenarioData.flowcharts,
         {
           onTroopMessage: (agentId, type, message) => {
-            // Find which lieutenant this troop reports to
             const agent = session.simulation?.battle.agents.get(agentId);
             if (!agent) return;
             const lt = session.lieutenants.find(l => l.troopIds.includes(agentId))
               || session.enemyLieutenants.find(l => l.troopIds.includes(agentId));
 
-            // Only relay player troop messages to the client
             if (agent.team === 'player') {
               send(ws, {
                 type: 'message',
@@ -338,6 +338,269 @@ async function handleMessage(session: GameSession, message: { type: string; data
         }),
       ];
 
+      // Apply personality-based default flowcharts for all player lieutenants' troops
+      const enemyCenter = { x: scenarioData.width - 50, y: scenarioData.height / 2 };
+      for (const lt of session.lieutenants) {
+        for (const troopId of lt.troopIds) {
+          const runtime = session.simulation.runtimes.get(troopId);
+          if (runtime) {
+            runtime.flowchart = createPersonalityFlowchart(troopId, lt.personality, enemyCenter);
+          }
+        }
+      }
+
+      // Build troop info for each lieutenant to send to client
+      const troopInfo: Record<string, Array<{
+        id: string; squadId: string; position: { x: number; y: number };
+        stats: { combat: number; speed: number; courage: number; discipline: number };
+      }>> = {};
+
+      for (const lt of session.lieutenants) {
+        troopInfo[lt.id] = lt.troopIds.map(tid => {
+          const agent = session.simulation!.battle.agents.get(tid) as TroopAgent;
+          return {
+            id: agent.id,
+            squadId: agent.squadId,
+            position: { x: agent.position.x, y: agent.position.y },
+            stats: agent.stats as TroopStats,
+          };
+        });
+      }
+
+      // Send lieutenant and troop info to client
+      sendLieutenants(session);
+      sendAllLieutenantFlowcharts(session);
+
+      send(ws, {
+        type: 'scenario_ready',
+        data: {
+          troopInfo,
+          mapSize: { width: scenarioData.width, height: scenarioData.height },
+        },
+      });
+      break;
+    }
+
+    case 'pre_battle_brief': {
+      // Conversational briefing: send a message to a lieutenant and get a response
+      // without starting the battle. Supports multiple rounds.
+      const { lieutenantId, message: briefMessage } = message.data as {
+        lieutenantId: string;
+        message: string;
+      };
+
+      if (!session.apiKey || !session.anthropicClient) {
+        send(ws, { type: 'error', data: { message: 'API key not set' } });
+        return;
+      }
+
+      if (!session.simulation) {
+        send(ws, { type: 'error', data: { message: 'Scenario not initialized. Call init_scenario first.' } });
+        return;
+      }
+
+      const briefLt = session.lieutenants.find(lt => lt.id === lieutenantId);
+      if (!briefLt) {
+        send(ws, { type: 'error', data: { message: 'Lieutenant not found' } });
+        return;
+      }
+
+      if (briefLt.busy) {
+        send(ws, { type: 'error', data: { message: `${briefLt.name} is still processing your previous message.` } });
+        return;
+      }
+
+      // Mark as busy
+      briefLt.busy = true;
+      sendLieutenants(session);
+
+      // Echo the player's message back to them
+      send(ws, {
+        type: 'message',
+        data: {
+          id: `msg_${Date.now()}_cmd`,
+          from: 'commander',
+          to: lieutenantId,
+          content: briefMessage,
+          timestamp: Date.now(),
+          tick: 0,
+          type: 'order',
+        },
+      });
+
+      try {
+        const context = buildOrderContext(session, briefLt);
+        const result = await processOrderWithModel(session, briefLt, briefMessage, context);
+
+        briefLt.busy = false;
+
+        if (result.success && result.output) {
+          // Apply flowcharts from this briefing round
+          const compiled = compileDirectives(result.output, briefLt.troopIds);
+          applyFlowcharts(compiled, session.simulation!.runtimes);
+
+          // Send updated flowchart
+          const ltFlowchart = buildLieutenantFlowchart(briefLt.id, briefLt.troopIds, session.simulation!.runtimes);
+          send(ws, {
+            type: 'flowchart',
+            data: {
+              lieutenantId: briefLt.id,
+              flowcharts: { [briefLt.id]: ltFlowchart },
+            },
+          });
+
+          // Send lieutenant's response
+          send(ws, {
+            type: 'message',
+            data: {
+              id: `msg_${Date.now()}_${briefLt.id}`,
+              from: lieutenantId,
+              to: 'commander',
+              content: result.output.message_up || 'Understood, commander.',
+              timestamp: Date.now(),
+              tick: 0,
+              type: 'report',
+            },
+          });
+        } else {
+          send(ws, {
+            type: 'message',
+            data: {
+              id: `msg_${Date.now()}_${briefLt.id}`,
+              from: lieutenantId,
+              to: 'commander',
+              content: `I didn't quite follow that, commander. Could you clarify? (${result.error})`,
+              timestamp: Date.now(),
+              tick: 0,
+              type: 'alert',
+            },
+          });
+        }
+      } catch (err) {
+        briefLt.busy = false;
+        send(ws, {
+          type: 'message',
+          data: {
+            id: `msg_${Date.now()}_${briefLt.id}`,
+            from: lieutenantId,
+            to: 'commander',
+            content: `Communication error: ${(err as Error).message}`,
+            timestamp: Date.now(),
+            tick: 0,
+            type: 'alert',
+          },
+        });
+      }
+
+      sendLieutenants(session);
+      break;
+    }
+
+    case 'init_battle': {
+      const { briefings, gameMode, playerPersonality, enemyPersonality } = message.data as {
+        briefings?: Record<string, string>;
+        gameMode?: GameMode;
+        playerPersonality?: 'aggressive' | 'cautious' | 'balanced';
+        enemyPersonality?: 'aggressive' | 'cautious' | 'balanced';
+      };
+
+      if (gameMode) {
+        session.gameMode = gameMode;
+      }
+
+      // If scenario not yet initialized (legacy flow or AI vs AI), do it now
+      if (!session.simulation) {
+        // Create scenario
+        const scenarioData = createBasicScenario();
+
+        session.simulation = createSimulation(
+          scenarioData.width,
+          scenarioData.height,
+          scenarioData.agents,
+          scenarioData.flowcharts,
+          {
+            onTroopMessage: (agentId, type, message) => {
+              const agent = session.simulation?.battle.agents.get(agentId);
+              if (!agent) return;
+              const lt = session.lieutenants.find(l => l.troopIds.includes(agentId))
+                || session.enemyLieutenants.find(l => l.troopIds.includes(agentId));
+
+              if (agent.team === 'player') {
+                send(ws, {
+                  type: 'message',
+                  data: {
+                    id: `msg_${Date.now()}_${agentId}`,
+                    from: lt?.id || agentId,
+                    to: 'commander',
+                    content: `[${agentId}] ${message}`,
+                    timestamp: Date.now(),
+                    tick: session.simulation?.battle.tick ?? 0,
+                    type: type === 'alert' ? 'alert' : 'report',
+                  },
+                });
+              }
+            },
+          }
+        );
+
+        session.lieutenants = [
+          createLieutenant({
+            id: 'lt_alpha',
+            name: 'Lt. Adaeze',
+            personality: 'aggressive',
+            stats: { initiative: 8, discipline: 5, communication: 7 },
+            troopIds: Array.from(session.simulation.battle.agents.keys()).filter(id => id.startsWith('p_s1')),
+            authorizedPeers: ['lt_bravo'],
+          }),
+          createLieutenant({
+            id: 'lt_bravo',
+            name: 'Lt. Chen',
+            personality: 'cautious',
+            stats: { initiative: 5, discipline: 8, communication: 6 },
+            troopIds: Array.from(session.simulation.battle.agents.keys()).filter(id => id.startsWith('p_s2')),
+            authorizedPeers: ['lt_alpha', 'lt_charlie'],
+          }),
+          createLieutenant({
+            id: 'lt_charlie',
+            name: 'Lt. Morrison',
+            personality: 'disciplined',
+            stats: { initiative: 6, discipline: 9, communication: 5 },
+            troopIds: Array.from(session.simulation.battle.agents.keys()).filter(id => id.startsWith('p_s3')),
+            authorizedPeers: ['lt_bravo'],
+          }),
+        ];
+
+        session.enemyLieutenants = [
+          createLieutenant({
+            id: 'lt_enemy_1',
+            name: 'Lt. Volkov',
+            personality: 'aggressive',
+            stats: { initiative: 7, discipline: 6, communication: 5 },
+            troopIds: Array.from(session.simulation.battle.agents.keys()).filter(id => id.startsWith('e_s1') || id.startsWith('e_s2')),
+            authorizedPeers: ['lt_enemy_2'],
+          }),
+          createLieutenant({
+            id: 'lt_enemy_2',
+            name: 'Lt. Kira',
+            personality: 'cautious',
+            stats: { initiative: 5, discipline: 8, communication: 7 },
+            troopIds: Array.from(session.simulation.battle.agents.keys()).filter(id => id.startsWith('e_s3')),
+            authorizedPeers: ['lt_enemy_1'],
+          }),
+        ];
+
+        // Apply personality-based default flowcharts
+        const enemyCenter = { x: 350, y: 150 };
+        for (const lt of session.lieutenants) {
+          for (const troopId of lt.troopIds) {
+            const runtime = session.simulation.runtimes.get(troopId);
+            if (runtime) {
+              runtime.flowchart = createPersonalityFlowchart(troopId, lt.personality, enemyCenter);
+            }
+          }
+        }
+      }
+
       // Create AI commander for enemy
       session.aiCommander = createAICommander({
         personality: enemyPersonality || 'balanced',
@@ -360,30 +623,14 @@ async function handleMessage(session: GameSession, message: { type: string; data
         session.playerAICommander = null;
       }
 
-      // Apply personality-based default flowcharts for all player lieutenants' troops.
-      // This ensures every lieutenant always has meaningful behavior even without a briefing.
-      // If a briefing is provided (or AI commander issues orders), it will override these.
-      if (session.simulation) {
-        const enemyCenter = { x: scenarioData.width - 50, y: scenarioData.height / 2 };
-        for (const lt of session.lieutenants) {
-          for (const troopId of lt.troopIds) {
-            const runtime = session.simulation.runtimes.get(troopId);
-            if (runtime) {
-              runtime.flowchart = createPersonalityFlowchart(troopId, lt.personality, enemyCenter);
-            }
-          }
-        }
-      }
-
-      // Process initial briefings
+      // Process AI briefings (enemy always, player only in ai_vs_ai)
       if (session.apiKey && session.anthropicClient) {
         const briefingPromises: Promise<void>[] = [];
 
         if (session.gameMode === 'ai_vs_ai' && session.playerAICommander) {
-          // In AI vs AI mode, brief player lieutenants via player AI commander
           briefingPromises.push(briefTeamLieutenants(session, session.playerAICommander, session.lieutenants));
-        } else {
-          // In human vs AI mode, use player-provided briefings
+        } else if (briefings) {
+          // Apply any final briefings that haven't been sent conversationally
           for (const lt of session.lieutenants) {
             const briefing = briefings[lt.id];
             if (briefing) {
@@ -401,8 +648,6 @@ async function handleMessage(session: GameSession, message: { type: string; data
       // Send initial state (visibility-filtered)
       sendBattleState(session);
       sendLieutenants(session);
-
-      // Send initial flowcharts so players can see default troop behavior
       sendAllLieutenantFlowcharts(session);
 
       send(ws, { type: 'battle_ready', data: { gameMode: session.gameMode } });

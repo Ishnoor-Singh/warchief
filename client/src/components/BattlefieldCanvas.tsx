@@ -117,8 +117,8 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
       ctx.fillStyle = '#0d1117';
       ctx.fillRect(0, 0, w, h);
 
-      // Draw grid
-      ctx.strokeStyle = '#1a1a2e';
+      // Draw grid (more visible)
+      ctx.strokeStyle = '#2a2a4e';
       ctx.lineWidth = 1;
       for (let x = 0; x < w; x += 50) {
         ctx.beginPath();
@@ -132,6 +132,28 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
         ctx.lineTo(w, y);
         ctx.stroke();
       }
+
+      // Draw direction labels
+      ctx.font = '12px Inter, sans-serif';
+      ctx.fillStyle = '#4a5568';
+      ctx.textAlign = 'center';
+      
+      // Top label
+      ctx.fillText('NORTH', w / 2, 15);
+      // Bottom label
+      ctx.fillText('SOUTH', w / 2, h - 5);
+      // Left label (Player side)
+      ctx.save();
+      ctx.translate(12, h / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText('← PLAYER', 0, 0);
+      ctx.restore();
+      // Right label (Enemy side)
+      ctx.save();
+      ctx.translate(w - 12, h / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.fillText('← ENEMY', 0, 0);
+      ctx.restore();
 
       // Fog of war disabled for clarity
       // const zones = battleState.visibilityZones;

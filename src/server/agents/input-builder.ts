@@ -28,6 +28,24 @@ export interface RecentMessage {
   timestamp: number;
 }
 
+/** Summary of a peer lieutenant's current situation. */
+export interface PeerStateInfo {
+  id: string;
+  name: string;
+  troopsAlive: number;
+  troopsTotal: number;
+  averageMorale: number;
+  currentAction: string;
+  position: Vec2;
+}
+
+/** Summary of a pending bus message for prompt context. */
+export interface PendingBusMessageInfo {
+  from: string;
+  type: string;
+  content: string;
+}
+
 export interface LieutenantContext {
   identity: LieutenantIdentity;
   currentOrders: string;
@@ -36,6 +54,10 @@ export interface LieutenantContext {
   authorizedPeers: string[];
   terrain: string;
   recentMessages: RecentMessage[];
+  /** Current state of authorized peers (for informed coordination). */
+  peerStates?: PeerStateInfo[];
+  /** Pending messages from the bus (support requests, peer comms, etc.). */
+  pendingBusMessages?: PendingBusMessageInfo[];
 }
 
 const PERSONALITY_GUIDANCE: Record<LieutenantIdentity['personality'], string> = {
@@ -89,7 +111,7 @@ const ACTION_TYPES = [
 ];
 
 export function buildLieutenantPrompt(context: LieutenantContext): string {
-  const { identity, currentOrders, visibleUnits, visibleEnemies, authorizedPeers, terrain, recentMessages } = context;
+  const { identity, currentOrders, visibleUnits, visibleEnemies, authorizedPeers, terrain, recentMessages, peerStates, pendingBusMessages } = context;
 
   const sections: string[] = [];
   
@@ -133,6 +155,24 @@ No enemies currently visible.`);
   // Authorized peers
   sections.push(`# Authorized Peer Communication
 You may communicate with: ${authorizedPeers.length > 0 ? authorizedPeers.join(', ') : '(none)'}`);
+
+  // Peer status (situational awareness for coordination)
+  if (peerStates && peerStates.length > 0) {
+    const peerList = peerStates.map(p =>
+      `- ${p.name} (${p.id}) at (${Math.round(p.position.x)}, ${Math.round(p.position.y)}) — troops: ${p.troopsAlive}/${p.troopsTotal}, morale: ${Math.round(p.averageMorale)}%, action: ${p.currentAction}`
+    ).join('\n');
+    sections.push(`# Peer Status
+${peerList}`);
+  }
+
+  // Pending bus messages (support requests, peer comms, alerts)
+  if (pendingBusMessages && pendingBusMessages.length > 0) {
+    const msgList = pendingBusMessages.map(m =>
+      `- [${m.type}] from ${m.from}: ${m.content}`
+    ).join('\n');
+    sections.push(`# Incoming Messages
+${msgList}`);
+  }
 
   // Terrain
   sections.push(`# Terrain

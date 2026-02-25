@@ -150,7 +150,14 @@ function createBattleInterval(session: GameSession): NodeJS.Timeout {
   return setInterval(() => {
     if (!session.simulation || !session.simulation.battle.running) return;
 
-    simulationTick(session.simulation);
+    try {
+      simulationTick(session.simulation);
+    } catch (err) {
+      console.error('Simulation tick error:', err);
+      session.simulation.battle.running = false;
+      send(session.ws, { type: 'error', data: { message: 'Simulation error: ' + (err as Error).message } });
+      return;
+    }
 
     // Drain and send battle events
     if (session.simulation.pendingBattleEvents.length > 0) {

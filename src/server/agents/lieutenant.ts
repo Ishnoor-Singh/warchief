@@ -146,13 +146,16 @@ export async function processOrder(
   }
 }
 
+/** Timeout (ms) for a single LLM call. Prevents lieutenants getting stuck busy forever. */
+const LLM_TIMEOUT_MS = 30_000;
+
 // Make LLM call and parse response
 async function callLLM(
   client: LLMClient,
   systemPrompt: string,
   userMessage: string
 ): Promise<ProcessResult> {
-  const response = await client.messages.create({
+  const llmPromise = client.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 2048,
     system: systemPrompt,
@@ -160,6 +163,12 @@ async function callLLM(
       { role: 'user', content: userMessage },
     ],
   });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('LLM call timed out')), LLM_TIMEOUT_MS);
+  });
+
+  const response = await Promise.race([llmPromise, timeoutPromise]);
   
   // Extract text content
   const textContent = response.content.find(c => c.type === 'text');

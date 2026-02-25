@@ -732,6 +732,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
         return;
       }
 
+      if (lieutenant.busy) {
+        send(ws, { type: 'error', data: { message: `${lieutenant.name} is still processing a previous order.` } });
+        return;
+      }
+
       // Mark as busy
       lieutenant.busy = true;
       sendLieutenants(session);
@@ -1185,28 +1190,30 @@ async function briefTeamLieutenants(session: GameSession, commander: AICommander
   const result = await generateCommanderOrders(commander, session.simulation, session.anthropicClient);
 
   if (result.success && result.orders) {
-    for (const commanderOrder of result.orders) {
+    // Process all lieutenant orders in parallel to avoid sequential LLM waits
+    const orderPromises = result.orders.map(async (commanderOrder) => {
       const lt = lieutenants.find(l => l.id === commanderOrder.lieutenantId);
-      if (lt) {
-        const context = buildOrderContext(session, lt);
-        const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
+      if (!lt) return;
 
-        if (ltResult.success && ltResult.output) {
-          const compiled = compileDirectives(ltResult.output, lt.troopIds, lt.id);
-          applyFlowcharts(compiled, session.simulation!.runtimes);
+      const context = buildOrderContext(session, lt);
+      const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
 
-          // Send updated lieutenant-level flowchart
-          const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation!.runtimes);
-          send(session.ws, {
-            type: 'flowchart',
-            data: {
-              lieutenantId: lt.id,
-              flowcharts: { [lt.id]: ltFlowchart },
-            },
-          });
-        }
+      if (ltResult.success && ltResult.output) {
+        const compiled = compileDirectives(ltResult.output, lt.troopIds, lt.id);
+        applyFlowcharts(compiled, session.simulation!.runtimes);
+
+        // Send updated lieutenant-level flowchart
+        const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation!.runtimes);
+        send(session.ws, {
+          type: 'flowchart',
+          data: {
+            lieutenantId: lt.id,
+            flowcharts: { [lt.id]: ltFlowchart },
+          },
+        });
       }
-    }
+    });
+    await Promise.all(orderPromises);
   }
 
   // Notify the observer
@@ -1232,30 +1239,32 @@ async function runAICommanderCycle(session: GameSession, commander: AICommander,
   const result = await generateCommanderOrders(commander, session.simulation, session.anthropicClient);
 
   if (result.success && result.orders) {
-    for (const commanderOrder of result.orders) {
+    // Process all lieutenant orders in parallel to avoid sequential LLM waits
+    const orderPromises = result.orders.map(async (commanderOrder) => {
       const lt = lieutenants.find(l => l.id === commanderOrder.lieutenantId);
-      if (lt && !lt.busy) {
-        const context = buildOrderContext(session, lt);
-        const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
+      if (!lt || lt.busy) return;
 
-        if (ltResult.success && ltResult.output) {
-          const compiled = compileDirectives(ltResult.output, lt.troopIds, lt.id);
-          if (session.simulation) {
-            applyFlowcharts(compiled, session.simulation.runtimes);
+      const context = buildOrderContext(session, lt);
+      const ltResult = await processOrderWithModel(session, lt, commanderOrder.order, context);
 
-            // Send updated lieutenant-level flowchart to client
-            const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation.runtimes);
-            send(session.ws, {
-              type: 'flowchart',
-              data: {
-                lieutenantId: lt.id,
-                flowcharts: { [lt.id]: ltFlowchart },
-              },
-            });
-          }
+      if (ltResult.success && ltResult.output) {
+        const compiled = compileDirectives(ltResult.output, lt.troopIds, lt.id);
+        if (session.simulation) {
+          applyFlowcharts(compiled, session.simulation.runtimes);
+
+          // Send updated lieutenant-level flowchart to client
+          const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation.runtimes);
+          send(session.ws, {
+            type: 'flowchart',
+            data: {
+              lieutenantId: lt.id,
+              flowcharts: { [lt.id]: ltFlowchart },
+            },
+          });
         }
       }
-    }
+    });
+    await Promise.all(orderPromises);
 
     // In AI vs AI mode, relay player AI commander messages to the client
     if (commander.team === 'player' && result.orders.length > 0) {

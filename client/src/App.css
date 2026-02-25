@@ -327,7 +327,7 @@ body {
   font-style: italic;
 }
 
-/* Pre-Battle Screen */
+/* Pre-Battle Screen (legacy) */
 .pre-battle {
   flex: 1;
   display: flex;
@@ -382,6 +382,449 @@ body {
 
 .briefing-textarea:focus {
   border-color: var(--accent);
+}
+
+/* ============================================
+   War Room (Pre-Battle V2)
+   ============================================ */
+.pre-battle-v2 {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 24px;
+  overflow-y: auto;
+}
+
+.pre-battle-header {
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.pre-battle-header h2 {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.pre-battle-subtitle {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+/* War Room layout */
+.war-room-layout {
+  width: 100%;
+  max-width: 1000px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 24px;
+}
+
+/* Lieutenant tabs in war room */
+.war-room-lt-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.war-room-lt-tab {
+  flex: 1;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.war-room-lt-tab:hover {
+  background: var(--bg-input);
+}
+
+.war-room-lt-tab.selected {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.war-room-lt-tab.busy {
+  opacity: 0.7;
+}
+
+.war-room-lt-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.war-room-lt-personality {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.war-room-lt-personality.aggressive { color: #ff6b6b; }
+.war-room-lt-personality.cautious { color: #6bff6b; }
+.war-room-lt-personality.disciplined { color: #6b6bff; }
+.war-room-lt-personality.impulsive { color: #ffff6b; }
+
+.war-room-lt-busy {
+  font-size: 12px;
+}
+
+/* Main war room content */
+.war-room-main {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  overflow: hidden;
+  min-height: 420px;
+}
+
+/* Info column */
+.war-room-info {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.war-room-lt-card {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.war-room-lt-card h3 {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.war-room-lt-card .personality {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+
+.war-room-lt-card .personality.aggressive { color: #ff6b6b; }
+.war-room-lt-card .personality.cautious { color: #6bff6b; }
+.war-room-lt-card .personality.disciplined { color: #6b6bff; }
+
+.war-room-lt-card .personality-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+/* Troops section */
+.war-room-troops-section {
+  padding: 12px 16px;
+  flex: 1;
+}
+
+.war-room-troops-section h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+/* Troop info panel */
+.troop-info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.troop-info-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.troop-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.squad-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.squad-info {
+  background: var(--bg-dark);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.squad-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.squad-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.squad-size {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.squad-pos {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  margin-left: auto;
+}
+
+/* Squad stats */
+.squad-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.squad-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.squad-stat-label {
+  font-size: 9px;
+  color: var(--text-dim);
+  width: 28px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.squad-stat-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.squad-stat-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.squad-stat-fill.combat { background: #ff6b6b; }
+.squad-stat-fill.speed { background: #ffaa4a; }
+.squad-stat-fill.courage { background: #ffff6b; }
+.squad-stat-fill.discipline { background: #6b6bff; }
+
+.squad-stat-value {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text);
+  width: 20px;
+  text-align: right;
+}
+
+.troop-info-loading {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+  padding: 16px 0;
+  text-align: center;
+}
+
+/* Comms / Briefing chat column */
+.war-room-comms {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.war-room-comms h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  padding: 12px 16px 0;
+  margin-bottom: 8px;
+}
+
+/* Briefing chat */
+.briefing-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.briefing-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 200px;
+}
+
+.briefing-chat-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  padding: 32px 16px;
+  line-height: 1.5;
+}
+
+.briefing-chat-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.briefing-chat-msg.outgoing {
+  align-self: flex-end;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+
+.briefing-chat-msg.incoming {
+  align-self: flex-start;
+}
+
+.briefing-chat-msg.incoming.report {
+  background: rgba(74, 255, 106, 0.08);
+  border-left: 3px solid var(--success);
+}
+
+.briefing-chat-msg.incoming.alert {
+  background: rgba(255, 74, 74, 0.08);
+  border-left: 3px solid var(--enemy);
+}
+
+.briefing-chat-msg.incoming.thinking {
+  background: rgba(74, 158, 255, 0.08);
+  border-left: 3px solid var(--accent);
+}
+
+.briefing-chat-msg-from {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.briefing-chat-msg-content {
+  color: var(--text);
+}
+
+/* Typing indicator */
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.typing-indicator span {
+  width: 6px;
+  height: 6px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  animation: typing-bounce 1.4s ease-in-out infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* Briefing chat input */
+.briefing-chat-input-row {
+  padding: 12px 16px;
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.briefing-chat-input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+.briefing-chat-input:focus {
+  border-color: var(--accent);
+}
+
+.briefing-chat-input::placeholder {
+  color: var(--text-dim);
+}
+
+.briefing-chat-input:disabled {
+  opacity: 0.5;
+}
+
+.briefing-chat-send {
+  padding: 10px 20px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.briefing-chat-send:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.briefing-chat-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .start-battle-btn {

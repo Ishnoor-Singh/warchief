@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { BattlefieldCanvas } from './components/BattlefieldCanvas';
 import { MessagePanel } from './components/MessagePanel';
 import { FlowchartPanel } from './components/FlowchartPanel';
@@ -8,7 +8,7 @@ import { EndScreen } from './components/EndScreen';
 import { LandingScreen } from './components/LandingScreen';
 import { InstructionsScreen } from './components/InstructionsScreen';
 import { useWebSocket } from './hooks/useWebSocket';
-import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode } from './types';
+import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode, TroopInfo } from './types';
 import './App.css';
 
 type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle';
@@ -40,7 +40,6 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [flowcharts, setFlowcharts] = useState<Record<string, Flowchart>>({});
   const [selectedLieutenant, setSelectedLieutenant] = useState<string | null>(null);
-  const [briefings, setBriefings] = useState<Record<string, string>>({});
   const [battleSummary, setBattleSummary] = useState<DetailedBattleSummary | null>(null);
 
   // Setup state
@@ -56,6 +55,10 @@ function App() {
   const [gameMode, setGameMode] = useState<GameMode>('human_vs_ai');
   const [playerPersonality, setPlayerPersonality] = useState<'aggressive' | 'cautious' | 'balanced'>('balanced');
   const [enemyPersonality, setEnemyPersonality] = useState<'aggressive' | 'cautious' | 'balanced'>('balanced');
+
+  // Pre-battle scenario state
+  const [troopInfo, setTroopInfo] = useState<Record<string, TroopInfo[]>>({});
+  const [scenarioReady, setScenarioReady] = useState(false);
 
   // Ref to hold send function so handleWSMessage doesn't depend on it
   const sendRef = useRef<(message: unknown) => void>(() => {});
@@ -114,6 +117,16 @@ function App() {
           if (!prev && data.lieutenants.length > 0) return data.lieutenants[0]!.id;
           return prev;
         });
+        break;
+      }
+
+      case 'scenario_ready': {
+        const data = message.data as {
+          troopInfo: Record<string, TroopInfo[]>;
+          mapSize: { width: number; height: number };
+        };
+        setTroopInfo(data.troopInfo);
+        setScenarioReady(true);
         break;
       }
 
@@ -180,6 +193,15 @@ function App() {
   // Keep sendRef in sync so handleWSMessage can call it without a dependency
   sendRef.current = send;
 
+  // Initialize scenario when entering pre-battle phase
+  const scenarioInitRef = useRef(false);
+  useEffect(() => {
+    if (phase === 'pre-battle' && apiKeyValid && !scenarioReady && !scenarioInitRef.current) {
+      scenarioInitRef.current = true;
+      send({ type: 'init_scenario', data: { scenario: 'basic' } });
+    }
+  }, [phase, apiKeyValid, scenarioReady, send]);
+
   // API Key handling
   const handleSetApiKey = useCallback((apiKey: string) => {
     setIsValidating(true);
@@ -196,6 +218,11 @@ function App() {
     send({ type: 'set_game_mode', data: { mode } });
   }, [send]);
 
+  // Pre-battle conversational briefing
+  const handleSendBrief = useCallback((lieutenantId: string, message: string) => {
+    send({ type: 'pre_battle_brief', data: { lieutenantId, message } });
+  }, [send]);
+
   // Battle controls
   const handleStartBattle = useCallback(() => {
     setIsInitializing(true);
@@ -203,15 +230,13 @@ function App() {
     send({
       type: 'init_battle',
       data: {
-        scenario: 'basic',
-        briefings,
         gameMode: gameModeRef.current,
         playerPersonality,
         enemyPersonality,
       },
     });
     // start_battle will be sent automatically when battle_ready arrives
-  }, [send, briefings, playerPersonality, enemyPersonality]);
+  }, [send, playerPersonality, enemyPersonality]);
 
   const handlePauseBattle = useCallback(() => {
     if (isPaused) {
@@ -228,17 +253,15 @@ function App() {
     send({ type: 'send_order', data: { lieutenantId, order } });
   }, [send]);
 
-  const handleBriefingChange = useCallback((lieutenantId: string, briefing: string) => {
-    setBriefings(prev => ({ ...prev, [lieutenantId]: briefing }));
-  }, []);
-
   const handleNewBattle = useCallback(() => {
     setPhase('pre-battle');
     setMessages([]);
     setFlowcharts({});
     setBattleState(emptyBattleState);
     setBattleSummary(null);
-    setBriefings({});
+    setTroopInfo({});
+    setScenarioReady(false);
+    scenarioInitRef.current = false;
   }, []);
 
   // Connection status indicator
@@ -304,11 +327,12 @@ function App() {
             { id: 'lt_bravo', name: 'Lt. Chen', personality: 'cautious', troopIds: [], busy: false, stats: { initiative: 5, discipline: 8, communication: 6 } },
             { id: 'lt_charlie', name: 'Lt. Morrison', personality: 'disciplined', troopIds: [], busy: false, stats: { initiative: 6, discipline: 9, communication: 5 } },
           ]}
-          briefings={briefings}
-          onBriefingChange={handleBriefingChange}
+          onSendBrief={handleSendBrief}
           onStartBattle={handleStartBattle}
           isInitializing={isInitializing}
           messages={messages}
+          troopInfo={troopInfo}
+          scenarioReady={scenarioReady}
           gameMode={gameMode}
           onGameModeChange={handleGameModeChange}
           playerPersonality={playerPersonality}

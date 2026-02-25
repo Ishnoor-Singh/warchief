@@ -263,7 +263,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
       // Initialize the scenario, create lieutenants and troops, but don't start the battle.
       // This allows the player to see troop info and have conversational briefings.
       const { scenario, gameMode, playerPersonality, enemyPersonality } = message.data as {
-        scenario?: 'basic' | 'assault';
+        scenario?: 'basic' | 'assault' | 'river_crossing';
         gameMode?: GameMode;
         playerPersonality?: 'aggressive' | 'cautious' | 'balanced';
         enemyPersonality?: 'aggressive' | 'cautious' | 'balanced';

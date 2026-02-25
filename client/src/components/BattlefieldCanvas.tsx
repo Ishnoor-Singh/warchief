@@ -211,22 +211,34 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
       ctx.fillStyle = '#8892a2';
       ctx.textAlign = 'center';
       
-      // Top label
-      ctx.fillText('NORTH', w / 2, 15);
-      // Bottom label
-      ctx.fillText('SOUTH', w / 2, h - 5);
-      // Left label (Player side)
+      // Cardinal directions
+      ctx.fillText('NORTH', w / 2, 18);
+      ctx.fillText('SOUTH', w / 2, h - 8);
+      // Left/Right with West/East
       ctx.save();
-      ctx.translate(12, h / 2);
+      ctx.translate(18, h / 2);
       ctx.rotate(-Math.PI / 2);
-      ctx.fillText('← PLAYER', 0, 0);
+      ctx.fillText('WEST (Player)', 0, 0);
       ctx.restore();
-      // Right label (Enemy side)
       ctx.save();
-      ctx.translate(w - 12, h / 2);
+      ctx.translate(w - 18, h / 2);
       ctx.rotate(Math.PI / 2);
-      ctx.fillText('← ENEMY', 0, 0);
+      ctx.fillText('EAST (Enemy)', 0, 0);
       ctx.restore();
+
+      // Draw grid coordinate numbers
+      ctx.font = '10px Inter, sans-serif';
+      ctx.fillStyle = '#5a6678';
+      ctx.textAlign = 'center';
+      // X-axis labels (every 100 units)
+      for (let x = 0; x <= battleState.width; x += 100) {
+        ctx.fillText(String(x), x * SCALE, h - 20);
+      }
+      // Y-axis labels
+      ctx.textAlign = 'right';
+      for (let y = 0; y <= battleState.height; y += 100) {
+        ctx.fillText(String(y), 35, y * SCALE + 4);
+      }
 
       // Fog of war disabled for clarity
       // const zones = battleState.visibilityZones;

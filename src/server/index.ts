@@ -810,6 +810,123 @@ async function handleMessage(session: GameSession, message: { type: string; data
       }
       break;
     }
+
+    case 'update_lieutenant_config': {
+      const { lieutenantId, personality, stats } = message.data as {
+        lieutenantId: string;
+        personality?: 'aggressive' | 'cautious' | 'disciplined' | 'impulsive';
+        stats?: { initiative?: number; discipline?: number; communication?: number };
+      };
+
+      const lt = session.lieutenants.find(l => l.id === lieutenantId);
+      if (!lt) {
+        send(ws, { type: 'error', data: { message: 'Lieutenant not found' } });
+        return;
+      }
+
+      const personalityChanged = personality && personality !== lt.personality;
+      if (personality) lt.personality = personality;
+      if (stats) {
+        if (stats.initiative !== undefined) lt.stats.initiative = Math.max(1, Math.min(10, stats.initiative));
+        if (stats.discipline !== undefined) lt.stats.discipline = Math.max(1, Math.min(10, stats.discipline));
+        if (stats.communication !== undefined) lt.stats.communication = Math.max(1, Math.min(10, stats.communication));
+      }
+
+      // If personality changed, recreate the default flowchart for all troops
+      if (personalityChanged && session.simulation) {
+        const enemyCenter = { x: session.simulation.battle.width - 50, y: session.simulation.battle.height / 2 };
+        for (const troopId of lt.troopIds) {
+          const runtime = session.simulation.runtimes.get(troopId);
+          if (runtime) {
+            runtime.flowchart = createPersonalityFlowchart(troopId, lt.personality, enemyCenter);
+          }
+        }
+        const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation.runtimes);
+        send(ws, { type: 'flowchart', data: { lieutenantId: lt.id, flowcharts: { [lt.id]: ltFlowchart } } });
+      }
+
+      sendLieutenants(session);
+      break;
+    }
+
+    case 'update_squad_stats': {
+      const { squadId, stats } = message.data as {
+        squadId: string;
+        stats: { combat?: number; speed?: number; courage?: number; discipline?: number };
+      };
+
+      if (!session.simulation) {
+        send(ws, { type: 'error', data: { message: 'Scenario not initialized' } });
+        return;
+      }
+
+      const clamp = (v: number) => Math.max(1, Math.min(10, v));
+
+      for (const agent of session.simulation.battle.agents.values()) {
+        if (agent.type === 'troop' && (agent as TroopAgent).squadId === squadId) {
+          const troop = agent as TroopAgent;
+          if (stats.combat !== undefined) troop.stats.combat = clamp(stats.combat);
+          if (stats.speed !== undefined) troop.stats.speed = clamp(stats.speed);
+          if (stats.courage !== undefined) troop.stats.courage = clamp(stats.courage);
+          if (stats.discipline !== undefined) troop.stats.discipline = clamp(stats.discipline);
+        }
+      }
+
+      // Rebuild and resend troop info
+      const troopInfo: Record<string, Array<{
+        id: string; squadId: string; position: { x: number; y: number };
+        stats: { combat: number; speed: number; courage: number; discipline: number };
+      }>> = {};
+      for (const lt of session.lieutenants) {
+        troopInfo[lt.id] = lt.troopIds.map(tid => {
+          const agent = session.simulation!.battle.agents.get(tid) as TroopAgent;
+          return { id: agent.id, squadId: agent.squadId, position: agent.position, stats: agent.stats as import('../shared/types/index.js').TroopStats };
+        });
+      }
+      send(ws, { type: 'scenario_ready', data: { troopInfo, mapSize: { width: session.simulation.battle.width, height: session.simulation.battle.height } } });
+      break;
+    }
+
+    case 'update_flowchart_node': {
+      const { lieutenantId, operation, node, nodeId } = message.data as {
+        lieutenantId: string;
+        operation: 'add' | 'update' | 'delete';
+        node?: { id: string; on: string; condition?: string; action: { type: string; [key: string]: unknown }; priority?: number };
+        nodeId?: string;
+      };
+
+      if (!session.simulation) {
+        send(ws, { type: 'error', data: { message: 'Scenario not initialized' } });
+        return;
+      }
+
+      const ltToUpdate = session.lieutenants.find(l => l.id === lieutenantId);
+      if (!ltToUpdate) {
+        send(ws, { type: 'error', data: { message: 'Lieutenant not found' } });
+        return;
+      }
+
+      for (const troopId of ltToUpdate.troopIds) {
+        const runtime = session.simulation.runtimes.get(troopId);
+        if (!runtime) continue;
+
+        if (operation === 'add' && node) {
+          // Use base node id across all troops so deduplication in buildLieutenantFlowchart works
+          runtime.flowchart.nodes.push(node as unknown as FlowchartNode);
+        } else if (operation === 'update' && node) {
+          const idx = runtime.flowchart.nodes.findIndex(n => n.id === node.id);
+          if (idx >= 0) {
+            runtime.flowchart.nodes[idx] = node as unknown as FlowchartNode;
+          }
+        } else if (operation === 'delete' && nodeId) {
+          runtime.flowchart.nodes = runtime.flowchart.nodes.filter(n => n.id !== nodeId);
+        }
+      }
+
+      const updatedFlowchart = buildLieutenantFlowchart(ltToUpdate.id, ltToUpdate.troopIds, session.simulation.runtimes);
+      send(ws, { type: 'flowchart', data: { lieutenantId: ltToUpdate.id, flowcharts: { [ltToUpdate.id]: updatedFlowchart } } });
+      break;
+    }
   }
 }
 

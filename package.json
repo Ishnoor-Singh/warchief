@@ -8,9 +8,12 @@
     "build": "npm run build:client && npm run build:server",
     "build:server": "tsc",
     "build:client": "cd client && npm run build",
-    "start": "node dist/server/index.js",
-    "dev": "npx tsx src/server/index.ts",
+    "start": "npx partykit dev",
+    "start:legacy": "node dist/server/index.js",
+    "dev": "npx partykit dev",
+    "dev:legacy": "npx tsx src/server/index.ts",
     "dev:client": "cd client && npm run dev",
+    "deploy": "npx partykit deploy",
     "battle": "npx tsx src/main.ts basic",
     "assault": "npx tsx src/main.ts assault",
     "demo": "npx tsx src/demo.ts",
@@ -43,6 +46,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "express": "^5.2.1",
+    "partykit": "^0.0.115",
+    "partysocket": "^1.1.16",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   }

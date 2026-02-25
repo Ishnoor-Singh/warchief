@@ -21,10 +21,23 @@ interface Model {
   default?: boolean;
 }
 
-// WebSocket URL - use current host in production, wss:// for HTTPS
-const WS_URL = import.meta.env.DEV
-  ? 'ws://localhost:3000/ws'
-  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+// Generate a unique room ID per browser tab, or extract from URL hash
+function getOrCreateRoomId(): string {
+  // Check URL hash first (for shareable links)
+  const hash = window.location.hash.slice(1);
+  if (hash) return hash;
+
+  // Check sessionStorage for an existing room
+  const stored = sessionStorage.getItem('warchief_room');
+  if (stored) return stored;
+
+  // Generate a new room ID
+  const id = 'game_' + Math.random().toString(36).slice(2, 10);
+  sessionStorage.setItem('warchief_room', id);
+  return id;
+}
+
+const ROOM_ID = getOrCreateRoomId();
 
 const emptyBattleState: BattleState = {
   tick: 0,
@@ -209,7 +222,7 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { status, send } = useWebSocket(WS_URL, handleWSMessage);
+  const { status, send } = useWebSocket(ROOM_ID, handleWSMessage);
 
   // Keep sendRef in sync so handleWSMessage can call it without a dependency
   sendRef.current = send;

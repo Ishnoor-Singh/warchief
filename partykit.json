@@ -1,0 +1,7 @@
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "warchief",
+  "main": "src/server/game-server.ts",
+  "compatibilityDate": "2024-09-01",
+  "serve": "client/dist"
+}

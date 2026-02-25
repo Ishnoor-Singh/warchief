@@ -82,6 +82,20 @@ export interface Flowchart {
   nodes: FlowchartNode[];
 }
 
+export interface TroopStats {
+  combat: number;
+  speed: number;
+  courage: number;
+  discipline: number;
+}
+
+export interface TroopInfo {
+  id: string;
+  squadId: string;
+  position: Vec2;
+  stats: TroopStats;
+}
+
 export interface DetailedBattleSummary {
   tick: number;
   durationSeconds: number;

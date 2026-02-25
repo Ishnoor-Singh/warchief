@@ -596,7 +596,7 @@ function getFullStateForObserver(sim: SimulationState) {
   const agents: Array<{
     id: string; type: string; team: string; position: { x: number; y: number };
     health: number; maxHealth: number; morale: number; currentAction: string | null;
-    formation: string; alive: boolean;
+    formation: string; alive: boolean; lieutenantId: string | null;
   }> = [];
 
   for (const agent of sim.battle.agents.values()) {
@@ -611,6 +611,7 @@ function getFullStateForObserver(sim: SimulationState) {
       currentAction: agent.currentAction,
       formation: agent.formation,
       alive: agent.alive,
+      lieutenantId: agent.lieutenantId,
     });
   }
 

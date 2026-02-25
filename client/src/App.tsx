@@ -328,6 +328,7 @@ function App() {
             <BattlefieldCanvas
               battleState={battleState}
               selectedLieutenant={selectedLieutenant}
+              lieutenants={lieutenants}
             />
           </div>
 

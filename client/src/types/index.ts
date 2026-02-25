@@ -19,6 +19,7 @@ export interface AgentState {
   currentAction: string | null;
   formation: FormationType;
   alive: boolean;
+  lieutenantId: string | null;
 }
 
 export interface VisibilityZone {

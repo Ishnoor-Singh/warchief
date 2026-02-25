@@ -1,6 +1,6 @@
 // Test scenario: Two armies with basic engage-on-sight flowcharts
 
-import { AgentState, TroopAgent, Vec2, Team, TroopStats } from '../../shared/types/index.js';
+import { AgentState, TroopAgent, Vec2, Team, TroopStats, LieutenantStats } from '../../shared/types/index.js';
 import { Flowchart, createEngageOnSightFlowchart, createHoldPositionFlowchart } from '../runtime/flowchart.js';
 
 // Create a troop agent
@@ -31,7 +31,7 @@ function createTroop(
     targetPosition: null,
     targetId: null,
     formation: 'line',
-    visibilityRadius: 80,
+    visibilityRadius: 60,
     stats: { ...defaultStats, ...stats },
     lieutenantId,
     squadId,
@@ -66,6 +66,39 @@ function createSquad(
   return troops;
 }
 
+// Create a lieutenant simulation agent with elevated visibility radius
+function createLieutenantAgent(
+  id: string,
+  team: Team,
+  position: Vec2,
+  stats?: Partial<LieutenantStats>
+): AgentState {
+  const defaultStats: LieutenantStats = {
+    initiative: 5,
+    discipline: 5,
+    communication: 5,
+  };
+
+  return {
+    id,
+    type: 'lieutenant',
+    team,
+    position: { ...position },
+    health: 100,
+    maxHealth: 100,
+    morale: 100,
+    currentAction: 'holding',
+    targetPosition: null,
+    targetId: null,
+    formation: 'line',
+    visibilityRadius: 150,
+    stats: { ...defaultStats, ...stats },
+    lieutenantId: null,
+    squadId: null,
+    alive: true,
+  };
+}
+
 export interface ScenarioSetup {
   agents: AgentState[];
   flowcharts: Flowchart[];
@@ -88,15 +121,23 @@ export function createBasicScenario(): ScenarioSetup {
   const playerSquad2 = createSquad('p_s2', 'player', { x: 50, y: 150 }, 10, 'lt_alpha', 'squad_2');
   const playerSquad3 = createSquad('p_s3', 'player', { x: 50, y: 200 }, 10, 'lt_bravo', 'squad_3');
   
-  agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3);
-  
+  // Lieutenant agents for player — positioned behind their squads, higher visibility radius
+  const ltAlpha = createLieutenantAgent('lt_alpha', 'player', { x: 30, y: 125 });
+  const ltBravo = createLieutenantAgent('lt_bravo', 'player', { x: 30, y: 200 });
+
+  agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3, ltAlpha, ltBravo);
+
   // Enemy army - right side
   // 3 squads of 10 troops each
   const enemySquad1 = createSquad('e_s1', 'enemy', { x: 350, y: 100 }, 10, 'lt_enemy_1', 'enemy_squad_1');
   const enemySquad2 = createSquad('e_s2', 'enemy', { x: 350, y: 150 }, 10, 'lt_enemy_1', 'enemy_squad_2');
   const enemySquad3 = createSquad('e_s3', 'enemy', { x: 350, y: 200 }, 10, 'lt_enemy_2', 'enemy_squad_3');
-  
-  agents.push(...enemySquad1, ...enemySquad2, ...enemySquad3);
+
+  // Lieutenant agents for enemy — positioned behind their squads
+  const ltEnemy1 = createLieutenantAgent('lt_enemy_1', 'enemy', { x: 370, y: 125 });
+  const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 370, y: 200 });
+
+  agents.push(...enemySquad1, ...enemySquad2, ...enemySquad3, ltEnemy1, ltEnemy2);
   
   // Create flowcharts for all agents
   // Player troops: engage on sight (will advance toward enemy)
@@ -126,14 +167,23 @@ export function createAssaultScenario(): ScenarioSetup {
   const playerSquad2 = createSquad('p_s2', 'player', { x: 50, y: 150 }, 12, 'lt_bravo', 'squad_2', { combat: 4 });
   const playerSquad3 = createSquad('p_s3', 'player', { x: 50, y: 220 }, 12, 'lt_charlie', 'squad_3', { combat: 4 });
   
-  agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3);
-  
+  // Lieutenant agents for player — positioned behind their squads, higher visibility radius
+  const ltAlpha = createLieutenantAgent('lt_alpha', 'player', { x: 30, y: 80 });
+  const ltBravo = createLieutenantAgent('lt_bravo', 'player', { x: 30, y: 150 });
+  const ltCharlie = createLieutenantAgent('lt_charlie', 'player', { x: 30, y: 220 });
+
+  agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3, ltAlpha, ltBravo, ltCharlie);
+
   // Enemy army - right side, defending a ridge
   // Fewer troops, higher stats, better position
   const enemySquad1 = createSquad('e_s1', 'enemy', { x: 400, y: 120 }, 8, 'lt_enemy_1', 'enemy_squad_1', { combat: 7 });
   const enemySquad2 = createSquad('e_s2', 'enemy', { x: 400, y: 180 }, 8, 'lt_enemy_2', 'enemy_squad_2', { combat: 7 });
-  
-  agents.push(...enemySquad1, ...enemySquad2);
+
+  // Lieutenant agents for enemy
+  const ltEnemy1 = createLieutenantAgent('lt_enemy_1', 'enemy', { x: 420, y: 120 });
+  const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 420, y: 180 });
+
+  agents.push(...enemySquad1, ...enemySquad2, ltEnemy1, ltEnemy2);
   
   // Flowcharts
   for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {

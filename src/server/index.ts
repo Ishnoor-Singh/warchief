@@ -942,21 +942,25 @@ function buildOrderContext(session: GameSession, lieutenant: Lieutenant): OrderC
       morale: a.morale,
     }));
 
-  // Aggregate enemy visibility across all of this lieutenant's troops
+  // Aggregate enemy visibility across all of this lieutenant's troops and the
+  // lieutenant's own simulation agent (which has a higher visibility radius).
   const visibleEnemies: VisibleEnemyInfo[] = [];
   const seenEnemyIds = new Set<string>();
 
   if (session.simulation) {
-    for (const troopId of lieutenant.troopIds) {
-      const troop = session.simulation.battle.agents.get(troopId);
-      if (!troop || !troop.alive) continue;
+    // Build the list of observers: the lieutenant's own sim agent + their troops
+    const observerIds = [lieutenant.id, ...lieutenant.troopIds];
+
+    for (const observerId of observerIds) {
+      const observer = session.simulation.battle.agents.get(observerId);
+      if (!observer || !observer.alive) continue;
 
       for (const agent of session.simulation.battle.agents.values()) {
-        if (agent.team === troop.team || !agent.alive) continue;
+        if (agent.team === observer.team || !agent.alive) continue;
         if (seenEnemyIds.has(agent.id)) continue;
 
-        const dist = distance(troop.position, agent.position);
-        if (dist <= troop.visibilityRadius) {
+        const dist = distance(observer.position, agent.position);
+        if (dist <= observer.visibilityRadius) {
           seenEnemyIds.add(agent.id);
           visibleEnemies.push({
             id: agent.id,

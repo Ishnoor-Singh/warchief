@@ -3,6 +3,18 @@
  *
  * Defines pre-built army configurations for testing and gameplay.
  * Uses engine unit factories for consistent, well-defined agents.
+ *
+ * ## Layout Convention
+ *
+ * Armies face each other horizontally (player=left, enemy=right).
+ * Lieutenants are positioned BEHIND their troops so that the
+ * east-facing line formation places troops ahead of (east of) them.
+ *
+ *   Player side:  Lt at x=50, troops form up at x=80 facing east
+ *   Enemy side:   Lt at x=350, troops form up at x=320 facing west
+ *
+ * `applyInitialFormations()` in simulation.ts places troops in their
+ * correct formation slots before the battle starts.
  */
 
 import { AgentState } from '../../shared/types/index.js';
@@ -41,10 +53,11 @@ export function createBasicScenario(): ScenarioSetup {
   const flowcharts: Flowchart[] = [];
 
   // ── Player Army (left side) ─────────────────────────────────────────────
+  // Lieutenants at x=50 (behind). Troops will form at x=80 facing east.
 
   const playerSquad1 = createSquad('p_s1', 10, {
     team: 'player',
-    centerPosition: { x: 80, y: 80 },
+    centerPosition: { x: 80, y: 75 },
     lieutenantId: 'lt_alpha',
     squadId: 'squad_1',
   });
@@ -58,7 +71,7 @@ export function createBasicScenario(): ScenarioSetup {
 
   const playerSquad3 = createSquad('p_s3', 10, {
     team: 'player',
-    centerPosition: { x: 80, y: 220 },
+    centerPosition: { x: 80, y: 225 },
     lieutenantId: 'lt_charlie',
     squadId: 'squad_3',
   });
@@ -66,7 +79,7 @@ export function createBasicScenario(): ScenarioSetup {
   const ltAlpha = createLieutenant({
     id: 'lt_alpha',
     team: 'player',
-    position: { x: 20, y: 80 },
+    position: { x: 50, y: 75 },
     name: 'Lt. Alpha',
     preset: 'aggressive',
     troopIds: playerSquad1.map(t => t.id),
@@ -75,7 +88,7 @@ export function createBasicScenario(): ScenarioSetup {
   const ltBravo = createLieutenant({
     id: 'lt_bravo',
     team: 'player',
-    position: { x: 20, y: 150 },
+    position: { x: 50, y: 150 },
     name: 'Lt. Bravo',
     preset: 'disciplined',
     troopIds: playerSquad2.map(t => t.id),
@@ -84,7 +97,7 @@ export function createBasicScenario(): ScenarioSetup {
   const ltCharlie = createLieutenant({
     id: 'lt_charlie',
     team: 'player',
-    position: { x: 20, y: 220 },
+    position: { x: 50, y: 225 },
     name: 'Lt. Charlie',
     preset: 'cautious',
     troopIds: playerSquad3.map(t => t.id),
@@ -93,10 +106,11 @@ export function createBasicScenario(): ScenarioSetup {
   agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3, ltAlpha, ltBravo, ltCharlie);
 
   // ── Enemy Army (right side) ─────────────────────────────────────────────
+  // Lieutenants at x=350 (behind). Troops form at x=320 facing west.
 
   const enemySquad1 = createSquad('e_s1', 10, {
     team: 'enemy',
-    centerPosition: { x: 320, y: 80 },
+    centerPosition: { x: 320, y: 75 },
     lieutenantId: 'lt_enemy_1',
     squadId: 'enemy_squad_1',
   });
@@ -110,7 +124,7 @@ export function createBasicScenario(): ScenarioSetup {
 
   const enemySquad3 = createSquad('e_s3', 10, {
     team: 'enemy',
-    centerPosition: { x: 320, y: 220 },
+    centerPosition: { x: 320, y: 225 },
     lieutenantId: 'lt_enemy_2',
     squadId: 'enemy_squad_3',
   });
@@ -118,7 +132,7 @@ export function createBasicScenario(): ScenarioSetup {
   const ltEnemy1 = createLieutenant({
     id: 'lt_enemy_1',
     team: 'enemy',
-    position: { x: 370, y: 115 },
+    position: { x: 350, y: 113 },
     name: 'Enemy Commander 1',
     preset: 'aggressive',
     troopIds: [...enemySquad1.map(t => t.id), ...enemySquad2.map(t => t.id)],
@@ -127,7 +141,7 @@ export function createBasicScenario(): ScenarioSetup {
   const ltEnemy2 = createLieutenant({
     id: 'lt_enemy_2',
     team: 'enemy',
-    position: { x: 370, y: 220 },
+    position: { x: 350, y: 225 },
     name: 'Enemy Commander 2',
     preset: 'disciplined',
     troopIds: enemySquad3.map(t => t.id),
@@ -139,18 +153,22 @@ export function createBasicScenario(): ScenarioSetup {
 
   // Player troops: engage on sight, advance toward enemy side
   for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {
-    flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 350, y: 150 }));
+    flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 320, y: 150 }));
   }
 
   // Enemy troops: engage on sight, advance toward player side
   for (const agent of [...enemySquad1, ...enemySquad2, ...enemySquad3]) {
-    flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 50, y: 150 }));
+    flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 80, y: 150 }));
   }
 
-  // All lieutenants get default flowcharts (FIX: ltCharlie was previously missing)
-  for (const lt of [ltAlpha, ltBravo, ltCharlie, ltEnemy1, ltEnemy2]) {
-    flowcharts.push(createLieutenantDefaultFlowchart(lt.id));
-  }
+  // Player lieutenants advance toward the enemy center
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_alpha', { x: 300, y: 75 }, 'aggressive'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_bravo', { x: 300, y: 150 }, 'disciplined'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_charlie', { x: 300, y: 225 }, 'cautious'));
+
+  // Enemy lieutenants advance toward the player center
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_1', { x: 100, y: 113 }, 'aggressive'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_2', { x: 100, y: 225 }, 'disciplined'));
 
   return { agents, flowcharts, width, height };
 }
@@ -173,7 +191,7 @@ export function createAssaultScenario(): ScenarioSetup {
 
   const playerSquad1 = createSquad('p_s1', 12, {
     team: 'player',
-    centerPosition: { x: 50, y: 80 },
+    centerPosition: { x: 80, y: 75 },
     lieutenantId: 'lt_alpha',
     squadId: 'squad_1',
     stats: { combat: 4 },
@@ -181,7 +199,7 @@ export function createAssaultScenario(): ScenarioSetup {
 
   const playerSquad2 = createSquad('p_s2', 12, {
     team: 'player',
-    centerPosition: { x: 50, y: 150 },
+    centerPosition: { x: 80, y: 150 },
     lieutenantId: 'lt_bravo',
     squadId: 'squad_2',
     stats: { combat: 4 },
@@ -189,7 +207,7 @@ export function createAssaultScenario(): ScenarioSetup {
 
   const playerSquad3 = createSquad('p_s3', 12, {
     team: 'player',
-    centerPosition: { x: 50, y: 220 },
+    centerPosition: { x: 80, y: 225 },
     lieutenantId: 'lt_charlie',
     squadId: 'squad_3',
     stats: { combat: 4 },
@@ -198,7 +216,7 @@ export function createAssaultScenario(): ScenarioSetup {
   const ltAlpha = createLieutenant({
     id: 'lt_alpha',
     team: 'player',
-    position: { x: 30, y: 80 },
+    position: { x: 50, y: 75 },
     name: 'Lt. Alpha',
     preset: 'aggressive',
     troopIds: playerSquad1.map(t => t.id),
@@ -207,7 +225,7 @@ export function createAssaultScenario(): ScenarioSetup {
   const ltBravo = createLieutenant({
     id: 'lt_bravo',
     team: 'player',
-    position: { x: 30, y: 150 },
+    position: { x: 50, y: 150 },
     name: 'Lt. Bravo',
     preset: 'disciplined',
     troopIds: playerSquad2.map(t => t.id),
@@ -216,7 +234,7 @@ export function createAssaultScenario(): ScenarioSetup {
   const ltCharlie = createLieutenant({
     id: 'lt_charlie',
     team: 'player',
-    position: { x: 30, y: 220 },
+    position: { x: 50, y: 225 },
     name: 'Lt. Charlie',
     preset: 'cautious',
     troopIds: playerSquad3.map(t => t.id),
@@ -228,7 +246,7 @@ export function createAssaultScenario(): ScenarioSetup {
 
   const enemySquad1 = createSquad('e_s1', 8, {
     team: 'enemy',
-    centerPosition: { x: 400, y: 120 },
+    centerPosition: { x: 400, y: 115 },
     lieutenantId: 'lt_enemy_1',
     squadId: 'enemy_squad_1',
     preset: 'vanguard',
@@ -237,7 +255,7 @@ export function createAssaultScenario(): ScenarioSetup {
 
   const enemySquad2 = createSquad('e_s2', 8, {
     team: 'enemy',
-    centerPosition: { x: 400, y: 180 },
+    centerPosition: { x: 400, y: 185 },
     lieutenantId: 'lt_enemy_2',
     squadId: 'enemy_squad_2',
     preset: 'guardian',
@@ -247,7 +265,7 @@ export function createAssaultScenario(): ScenarioSetup {
   const ltEnemy1 = createLieutenant({
     id: 'lt_enemy_1',
     team: 'enemy',
-    position: { x: 420, y: 120 },
+    position: { x: 430, y: 115 },
     name: 'Enemy Commander 1',
     preset: 'disciplined',
     troopIds: enemySquad1.map(t => t.id),
@@ -256,7 +274,7 @@ export function createAssaultScenario(): ScenarioSetup {
   const ltEnemy2 = createLieutenant({
     id: 'lt_enemy_2',
     team: 'enemy',
-    position: { x: 420, y: 180 },
+    position: { x: 430, y: 185 },
     name: 'Enemy Commander 2',
     preset: 'cautious',
     troopIds: enemySquad2.map(t => t.id),
@@ -268,7 +286,7 @@ export function createAssaultScenario(): ScenarioSetup {
 
   // Player troops: advance and engage
   for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {
-    flowcharts.push(createEngageOnSightFlowchart(agent.id));
+    flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 400, y: 150 }));
   }
 
   // Enemy troops: hold position and defend
@@ -276,10 +294,14 @@ export function createAssaultScenario(): ScenarioSetup {
     flowcharts.push(createHoldPositionFlowchart(agent.id));
   }
 
-  // All lieutenants get default flowcharts
-  for (const lt of [ltAlpha, ltBravo, ltCharlie, ltEnemy1, ltEnemy2]) {
-    flowcharts.push(createLieutenantDefaultFlowchart(lt.id));
-  }
+  // Player lieutenants advance toward enemy
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_alpha', { x: 380, y: 75 }, 'aggressive'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_bravo', { x: 380, y: 150 }, 'disciplined'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_charlie', { x: 380, y: 225 }, 'cautious'));
+
+  // Enemy lieutenants hold position (assault scenario — defenders don't advance)
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_1', { x: 430, y: 115 }, 'disciplined'));
+  flowcharts.push(createLieutenantDefaultFlowchart('lt_enemy_2', { x: 430, y: 185 }, 'cautious'));
 
   return { agents, flowcharts, width, height };
 }

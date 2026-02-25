@@ -251,14 +251,76 @@ export function createPersonalityFlowchart(
   }
 }
 
-// Default flowchart for a lieutenant agent — keeps them alive in the sim
-// with no troop-style behavior; self_directives from LLM output replace this
-export function createLieutenantDefaultFlowchart(agentId: string): Flowchart {
-  return {
-    agentId,
-    nodes: [],
-    defaultAction: { type: 'hold' },
-  };
+/**
+ * Default movement flowchart for a lieutenant.
+ *
+ * Gives the lieutenant autonomous movement so they advance with their troops
+ * and don't stand frozen at the spawn point. The LLM's self_directives
+ * replace this flowchart when orders arrive.
+ *
+ * @param agentId - The lieutenant's agent ID
+ * @param advanceTarget - Where to move when no enemies are visible (defaults to map center)
+ * @param personality - Shapes engagement range and aggression
+ */
+export function createLieutenantDefaultFlowchart(
+  agentId: string,
+  advanceTarget?: Vec2,
+  personality: 'aggressive' | 'cautious' | 'disciplined' | 'impulsive' = 'disciplined',
+): Flowchart {
+  const target = advanceTarget || { x: 200, y: 150 };
+
+  switch (personality) {
+    case 'aggressive':
+      return {
+        agentId,
+        nodes: [
+          // Close range: engage directly
+          { id: 'lt_engage_close', on: 'enemy_spotted', condition: 'distance < 60', action: { type: 'engage', targetId: '' }, priority: 10 },
+          // Advance when no threats visible
+          { id: 'lt_advance', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 2 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+
+    case 'impulsive':
+      return {
+        agentId,
+        nodes: [
+          { id: 'lt_engage_any', on: 'enemy_spotted', action: { type: 'engage', targetId: '' }, priority: 10 },
+          { id: 'lt_advance', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 2 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+
+    case 'cautious':
+      return {
+        agentId,
+        nodes: [
+          // Only fight when forced into close quarters
+          { id: 'lt_engage_close', on: 'enemy_spotted', condition: 'distance < 35', action: { type: 'engage', targetId: '' }, priority: 10 },
+          // Hold if enemy is in range but not too close
+          { id: 'lt_hold_far', on: 'enemy_spotted', action: { type: 'hold' }, priority: 5 },
+          // Advance carefully when clear
+          { id: 'lt_advance', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 2 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+
+    case 'disciplined':
+    default:
+      return {
+        agentId,
+        nodes: [
+          // Engage at medium range
+          { id: 'lt_engage_medium', on: 'enemy_spotted', condition: 'distance < 50', action: { type: 'engage', targetId: '' }, priority: 10 },
+          // Hold at long range — let troops handle it
+          { id: 'lt_hold_far', on: 'enemy_spotted', action: { type: 'hold' }, priority: 5 },
+          // Advance when area is clear
+          { id: 'lt_advance', on: 'no_enemies_visible', action: { type: 'moveTo', position: target }, priority: 2 },
+        ],
+        defaultAction: { type: 'hold' },
+      };
+  }
 }
 
 export function createFallbackFlowchart(agentId: string, fallbackPosition: Vec2): Flowchart {

@@ -44,6 +44,7 @@ import {
   // Vector math
   distance as vecDistance,
   clone as vecClone,
+  clamp as clampVec,
   isWithinRange,
   moveToward,
   // Combat
@@ -62,13 +63,29 @@ import {
   getVisibleEnemies as engineGetVisibleEnemies,
   // Formations
   computeFormationSlot,
+  FORMATION_SPACING,
   // Unit types
   isTroop,
+  isLieutenant,
 } from '../engine/index.js';
+import type { LieutenantAgent } from '../engine/index.js';
 
 const TICK_RATE = 10;  // ticks per second
 const TICK_MS = 1000 / TICK_RATE;
 const VISIBILITY_EVENT_INTERVAL = 10;  // fire enemy_spotted every N ticks (1/sec)
+
+/** Margin from map edge — units cannot move closer than this to any edge. */
+const BOUNDARY_MARGIN = 12;
+
+/** Minimum distance between any two alive units before separation is applied. */
+const UNIT_MIN_SEPARATION = 8;
+
+/** How strongly overlapping units are pushed apart each tick. */
+const UNIT_PUSH_FORCE = 0.6;
+
+/** Team-based facing directions (toward the enemy). */
+const PLAYER_FACING: Vec2 = { x: 1, y: 0 };  // east
+const ENEMY_FACING: Vec2 = { x: -1, y: 0 };  // west
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -168,16 +185,23 @@ export function simulationTick(state: SimulationState): void {
     }
   }
 
-  // 3. Move agents toward their targets (using engine movement)
+  // 3. Maintain formations — continuously update non-engaged troops to track their
+  //    lieutenant's current position so formations move as a unit.
+  maintainFormations(state);
+
+  // 4. Move agents toward their targets (using engine movement)
   updateMovement(state);
 
-  // 4. Resolve combat (using engine combat)
+  // 5. Separate overlapping units — prevent units from stacking on same spot.
+  separateUnits(state);
+
+  // 6. Resolve combat (using engine combat)
   resolveCombat(state);
 
-  // 5. Check win condition (using engine win condition)
+  // 7. Check win condition (using engine win condition)
   checkWinCondition(state);
 
-  // 6. Callback
+  // 8. Callback
   state.onTick?.(state);
 }
 
@@ -231,6 +255,16 @@ function updateVisibility(state: SimulationState): void {
 
 // ─── Action Execution ───────────────────────────────────────────────────────
 
+/** Get the team-based facing direction (toward the enemy). */
+function getTeamFacing(team: Team): Vec2 {
+  return team === 'player' ? PLAYER_FACING : ENEMY_FACING;
+}
+
+/** Clamp a position to within map bounds. */
+function clampToMap(pos: Vec2, battle: BattleState): Vec2 {
+  return clampVec(pos, BOUNDARY_MARGIN, BOUNDARY_MARGIN, battle.width - BOUNDARY_MARGIN, battle.height - BOUNDARY_MARGIN);
+}
+
 /** Execute an action for an agent. */
 function executeAction(state: SimulationState, agentId: string, action: GameAction): void {
   const agent = state.battle.agents.get(agentId);
@@ -238,7 +272,8 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
 
   switch (action.type) {
     case 'moveTo':
-      agent.targetPosition = action.position;
+      // Clamp destination to map bounds so agents can't be ordered off the map
+      agent.targetPosition = clampToMap(action.position, state.battle);
       agent.currentAction = 'moving';
       agent.targetId = null;
       break;
@@ -258,7 +293,8 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
     }
 
     case 'fallback':
-      agent.targetPosition = action.position;
+      // Clamp fallback destination to map bounds
+      agent.targetPosition = clampToMap(action.position, state.battle);
       agent.currentAction = 'falling_back';
       agent.targetId = null;
       break;
@@ -272,9 +308,20 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
     case 'setFormation':
       agent.formation = action.formation;
       if (isTroop(agent)) {
+        // Troop received setFormation — reposition to slot around lieutenant
         const lt = state.battle.agents.get(agent.lieutenantId);
         if (lt?.alive) {
-          repositionInFormation(state, agent, action.formation, lt.position);
+          repositionInFormation(state, agent, action.formation, lt.position, lt.team);
+        }
+      } else if (isLieutenant(agent)) {
+        // Lieutenant received setFormation — propagate to ALL troops under command
+        const ltAgent = agent as LieutenantAgent;
+        for (const troopId of ltAgent.troopIds) {
+          const troop = state.battle.agents.get(troopId);
+          if (troop?.alive && isTroop(troop)) {
+            troop.formation = action.formation;
+            repositionInFormation(state, troop, action.formation, agent.position, agent.team);
+          }
         }
       }
       break;
@@ -293,13 +340,14 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
 
 /**
  * Set a troop's target position to its slot in a formation around the lieutenant.
- * Uses engine's computeFormationSlot for positioning math.
+ * Uses engine's computeFormationSlot with team-appropriate facing direction.
  */
 function repositionInFormation(
   state: SimulationState,
   agent: AgentState,
   formation: FormationType,
-  ltPos: Vec2
+  ltPos: Vec2,
+  team: Team
 ): void {
   const teammates = Array.from(state.battle.agents.values())
     .filter(a => isTroop(a) && a.lieutenantId === agent.lieutenantId && a.alive)
@@ -308,10 +356,106 @@ function repositionInFormation(
   const index = teammates.findIndex(a => a.id === agent.id);
   if (index === -1) return;
 
-  const pos = computeFormationSlot(formation, ltPos, index, teammates.length);
+  const facing = getTeamFacing(team);
+  const rawPos = computeFormationSlot(formation, ltPos, index, teammates.length, FORMATION_SPACING, facing);
+  const pos = clampToMap(rawPos, state.battle);
   agent.targetPosition = pos;
   agent.currentAction = 'moving';
   agent.targetId = null;
+}
+
+// ─── Formation Maintenance ───────────────────────────────────────────────────
+
+/**
+ * Keep non-engaged troops moving to their formation slots around their lieutenant.
+ *
+ * Runs every tick. For each troop that is NOT actively engaging an enemy or
+ * falling back, update their target position to their current formation slot
+ * relative to the lieutenant's live position. This makes formations move as a
+ * unit when the lieutenant advances, and causes troops to re-form naturally
+ * after combat ends.
+ *
+ * Skips troops that are:
+ * - Engaging (chasing an enemy target)
+ * - Falling back
+ * - Already within 1 unit of their formation slot (no-op)
+ */
+function maintainFormations(state: SimulationState): void {
+  const { battle } = state;
+
+  for (const agent of battle.agents.values()) {
+    if (!agent.alive || !isTroop(agent)) continue;
+
+    // Don't override active engagement or fallback
+    if (agent.currentAction === 'engaging') continue;
+    if (agent.currentAction === 'falling_back') continue;
+    if (agent.targetId) continue;  // actively pursuing an enemy
+
+    const lt = battle.agents.get(agent.lieutenantId);
+    if (!lt?.alive) continue;
+
+    // Get all alive troops under this lieutenant, sorted for stable slot assignment
+    const teammates = Array.from(battle.agents.values())
+      .filter(a => isTroop(a) && a.lieutenantId === agent.lieutenantId && a.alive)
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    const index = teammates.findIndex(a => a.id === agent.id);
+    if (index === -1) continue;
+
+    const facing = getTeamFacing(lt.team);
+    const rawPos = computeFormationSlot(agent.formation, lt.position, index, teammates.length, FORMATION_SPACING, facing);
+    const formationPos = clampToMap(rawPos, battle);
+
+    // Only update target if it differs significantly from the current target
+    const currentTarget = agent.targetPosition;
+    if (!currentTarget || vecDistance(currentTarget, formationPos) > 1.5) {
+      agent.targetPosition = formationPos;
+      if (vecDistance(agent.position, formationPos) > 2) {
+        agent.currentAction = 'moving';
+      }
+    }
+  }
+}
+
+// ─── Unit Separation ────────────────────────────────────────────────────────
+
+/**
+ * Push apart units that are overlapping or too close to each other.
+ *
+ * Runs every tick after movement. Prevents units from stacking on the same
+ * position. Uses a simple repulsion force proportional to overlap depth.
+ * Only applies to alive units. O(n²) — acceptable for ≤100 units.
+ */
+function separateUnits(state: SimulationState): void {
+  const { battle } = state;
+  const agents = Array.from(battle.agents.values()).filter(a => a.alive);
+
+  for (let i = 0; i < agents.length; i++) {
+    for (let j = i + 1; j < agents.length; j++) {
+      const a = agents[i]!;
+      const b = agents[j]!;
+
+      const dx = b.position.x - a.position.x;
+      const dy = b.position.y - a.position.y;
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < UNIT_MIN_SEPARATION * UNIT_MIN_SEPARATION) {
+        if (distSq > 0.001) {
+          const dist = Math.sqrt(distSq);
+          const overlap = (UNIT_MIN_SEPARATION - dist) / 2;
+          const pushX = (dx / dist) * overlap * UNIT_PUSH_FORCE;
+          const pushY = (dy / dist) * overlap * UNIT_PUSH_FORCE;
+
+          a.position = clampToMap({ x: a.position.x - pushX, y: a.position.y - pushY }, battle);
+          b.position = clampToMap({ x: b.position.x + pushX, y: b.position.y + pushY }, battle);
+        } else {
+          // Identical positions — push one unit slightly in each axis
+          a.position = clampToMap({ x: a.position.x - UNIT_PUSH_FORCE, y: a.position.y }, battle);
+          b.position = clampToMap({ x: b.position.x + UNIT_PUSH_FORCE, y: b.position.y }, battle);
+        }
+      }
+    }
+  }
 }
 
 // ─── Movement ───────────────────────────────────────────────────────────────
@@ -319,6 +463,7 @@ function repositionInFormation(
 /**
  * Update agent positions based on their targets.
  * Uses engine's moveToward and getSpeed for reliable movement math.
+ * All positions are clamped to map bounds after every move.
  */
 function updateMovement(state: SimulationState): void {
   for (const agent of state.battle.agents.values()) {
@@ -346,17 +491,19 @@ function updateMovement(state: SimulationState): void {
 
       if (dist <= speed) {
         if (!isChasing) {
-          agent.position = vecClone(targetPos);
+          // Snap to target and clamp to map bounds
+          agent.position = clampToMap(vecClone(targetPos), state.battle);
           agent.targetPosition = null;
           agent.currentAction = 'holding';
 
           const runtime = state.runtimes.get(agent.id);
           if (runtime) {
-            queueEvent(runtime, { type: 'arrived', position: targetPos });
+            queueEvent(runtime, { type: 'arrived', position: agent.position });
           }
         }
       } else {
-        agent.position = moveToward(agent.position, targetPos, speed);
+        // Move toward target and clamp to map bounds
+        agent.position = clampToMap(moveToward(agent.position, targetPos, speed), state.battle);
       }
     }
   }
@@ -520,6 +667,45 @@ function checkWinCondition(state: SimulationState): void {
     state.battle.running = false;
     state.battle.winner = winner;
     state.onBattleEnd?.(winner);
+  }
+}
+
+// ─── Initial Formation Setup ────────────────────────────────────────────────
+
+/**
+ * Apply formation positions to all troops before the battle starts.
+ *
+ * This ensures troops begin the battle already arranged in their formation
+ * slots around their lieutenant, rather than in a flat line.
+ * Call this after all briefings are applied and before starting the sim loop.
+ */
+export function applyInitialFormations(state: SimulationState): void {
+  const { battle } = state;
+
+  // Build a map of lieutenant → sorted troop list for stable slot assignment
+  const ltTroops = new Map<string, AgentState[]>();
+  for (const agent of battle.agents.values()) {
+    if (!agent.alive || !isTroop(agent)) continue;
+    const list = ltTroops.get(agent.lieutenantId) ?? [];
+    list.push(agent);
+    ltTroops.set(agent.lieutenantId, list);
+  }
+
+  for (const [ltId, troops] of ltTroops) {
+    const lt = battle.agents.get(ltId);
+    if (!lt?.alive) continue;
+
+    troops.sort((a, b) => a.id.localeCompare(b.id));
+    const facing = getTeamFacing(lt.team);
+
+    for (let i = 0; i < troops.length; i++) {
+      const troop = troops[i]!;
+      const rawPos = computeFormationSlot(troop.formation, lt.position, i, troops.length, FORMATION_SPACING, facing);
+      // Teleport troops to formation positions at start (no lerp needed)
+      troop.position = clampToMap(rawPos, battle);
+      troop.targetPosition = null;
+      troop.currentAction = 'holding';
+    }
   }
 }
 

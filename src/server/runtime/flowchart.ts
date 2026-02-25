@@ -1,10 +1,18 @@
-// Flowchart runtime - executes the logic that lieutenants compile for troops
-// Troops are flowchart agents: fast, deterministic, dumb
+/**
+ * Flowchart runtime - executes the logic that lieutenants compile for troops.
+ *
+ * Troops are flowchart agents: fast, deterministic, dumb. They process
+ * events through a flowchart (directed graph of condition/action nodes)
+ * and output actions for the simulation to execute.
+ *
+ * Uses the engine's safe condition evaluator instead of eval().
+ */
 
 import { GameEvent, GameAction, EventType } from '../../shared/events/index.js';
 import { Vec2 } from '../../shared/types/index.js';
+import { evaluateCondition as safeEvaluateCondition } from '../engine/conditions.js';
 
-// A node in the flowchart - the basic unit of logic
+/** A node in the flowchart - the basic unit of logic. */
 export interface FlowchartNode {
   id: string;
   on: EventType;              // which event triggers this node
@@ -15,14 +23,14 @@ export interface FlowchartNode {
   priority?: number;          // higher priority nodes checked first (default 0)
 }
 
-// A complete flowchart for an agent
+/** A complete flowchart for an agent. */
 export interface Flowchart {
   agentId: string;
   nodes: FlowchartNode[];
   defaultAction: GameAction;  // fallback when no node matches
 }
 
-// Runtime state for an executing flowchart
+/** Runtime state for an executing flowchart. */
 export interface FlowchartRuntime {
   flowchart: Flowchart;
   currentNodeId: string | null;
@@ -30,41 +38,15 @@ export interface FlowchartRuntime {
   pendingActions: GameAction[];
 }
 
-// Simple expression evaluator for conditions
-// Supports: <, >, <=, >=, ==, !=, &&, ||
-// Variables come from event data
+/**
+ * Evaluate a condition against event data.
+ *
+ * Delegates to the engine's safe condition evaluator (no eval()).
+ * Supports: <, >, <=, >=, ==, !=, &&, ||
+ * Variables are resolved from event data.
+ */
 export function evaluateCondition(condition: string, event: GameEvent): boolean {
-  if (!condition) return true;
-  
-  // Build context from event
-  const context: Record<string, unknown> = { ...event };
-  
-  // Very simple expression parser
-  // In production, use a proper parser or sandbox
-  try {
-    // Replace variable names with values
-    let expr = condition;
-    for (const [key, value] of Object.entries(context)) {
-      if (typeof value === 'number') {
-        expr = expr.replace(new RegExp(`\\b${key}\\b`, 'g'), String(value));
-      } else if (typeof value === 'string') {
-        expr = expr.replace(new RegExp(`\\b${key}\\b`, 'g'), `"${value}"`);
-      }
-    }
-    
-    // Safe eval for simple numeric/boolean expressions
-    // Only allow: numbers, comparison operators, logical operators, parens
-    if (!/^[\d\s.<>=!&|()"\w-]+$/.test(expr)) {
-      console.warn(`Unsafe condition rejected: ${condition}`);
-      return false;
-    }
-    
-    // eslint-disable-next-line no-eval
-    return Boolean(eval(expr));
-  } catch (e) {
-    console.warn(`Failed to evaluate condition "${condition}":`, e);
-    return false;
-  }
+  return safeEvaluateCondition(condition, event);
 }
 
 // Create a new flowchart runtime

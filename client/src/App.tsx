@@ -1,4 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useQuery, useMutation, useAction } from 'convex/react';
+import { api } from '../../convex/_generated/api';
 import { BattlefieldCanvas } from './components/BattlefieldCanvas';
 import { MessagePanel } from './components/MessagePanel';
 import { FlowchartPanel } from './components/FlowchartPanel';
@@ -9,8 +11,8 @@ import { LandingScreen } from './components/LandingScreen';
 import { InstructionsScreen } from './components/InstructionsScreen';
 import { ArmyStrengthHUD } from './components/ArmyStrengthHUD';
 import { BattleEventTicker } from './components/BattleEventTicker';
-import { useWebSocket } from './hooks/useWebSocket';
 import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode, BattleEvent, TroopInfo } from './types';
+import type { Id } from '../../convex/_generated/dataModel';
 import './App.css';
 
 type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle';
@@ -20,11 +22,6 @@ interface Model {
   name: string;
   default?: boolean;
 }
-
-// WebSocket URL - use current host in production, wss:// for HTTPS
-const WS_URL = import.meta.env.DEV
-  ? 'ws://localhost:3000/ws'
-  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
 const emptyBattleState: BattleState = {
   tick: 0,
@@ -37,23 +34,14 @@ const emptyBattleState: BattleState = {
 
 function App() {
   const [phase, setPhase] = useState<GamePhase>('landing');
-  const [battleState, setBattleState] = useState<BattleState>(emptyBattleState);
-  const [lieutenants, setLieutenants] = useState<Lieutenant[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [flowcharts, setFlowcharts] = useState<Record<string, Flowchart>>({});
+  const [gameId, setGameId] = useState<Id<"games"> | null>(null);
   const [selectedLieutenant, setSelectedLieutenant] = useState<string | null>(null);
-  const [battleSummary, setBattleSummary] = useState<DetailedBattleSummary | null>(null);
-  const [battleEvents, setBattleEvents] = useState<BattleEvent[]>([]);
   const [speed, setSpeed] = useState(1);
-
-  // Setup state
-  const [models, setModels] = useState<Model[]>([]);
-  const [selectedModel, setSelectedModel] = useState('');
+  const [isPaused, setIsPaused] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [apiKeyValid, setApiKeyValid] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
 
   // Game mode state
   const [gameMode, setGameMode] = useState<GameMode>('human_vs_ai');
@@ -63,235 +51,258 @@ function App() {
   // Pre-battle scenario state
   const [troopInfo, setTroopInfo] = useState<Record<string, TroopInfo[]>>({});
   const [scenarioReady, setScenarioReady] = useState(false);
+  const [battleSummary, setBattleSummary] = useState<DetailedBattleSummary | null>(null);
 
-  // Ref to hold send function so handleWSMessage doesn't depend on it
-  const sendRef = useRef<(message: unknown) => void>(() => {});
-  // Track if we're waiting for battle_ready to auto-start
-  const pendingBattleStart = useRef(false);
-  // Track game mode for use in callbacks
-  const gameModeRef = useRef<GameMode>(gameMode);
-  gameModeRef.current = gameMode;
   // Track previous battle state for VFX diffing
   const prevBattleStateRef = useRef<BattleState>(emptyBattleState);
 
-  // Handle WebSocket messages
-  const handleWSMessage = useCallback((msg: unknown) => {
-    const message = msg as { type: string; data: unknown };
+  // ─── Convex Queries (reactive) ──────────────────────────────────────────────
 
-    switch (message.type) {
-      case 'connected': {
-        const data = message.data as { models: Model[]; selectedModel: string; gameMode?: GameMode };
-        setModels(data.models);
-        setSelectedModel(data.selectedModel);
-        if (data.gameMode) setGameMode(data.gameMode);
-        break;
-      }
+  const gameData = useQuery(api.games.getGame, gameId ? { gameId } : "skip");
+  const lieutenantsData = useQuery(api.games.getLieutenants, gameId ? { gameId } : "skip");
+  const flowchartsData = useQuery(api.games.getFlowcharts, gameId ? { gameId } : "skip");
+  const messagesData = useQuery(api.games.getMessages, gameId ? { gameId } : "skip");
+  const battleEventsData = useQuery(api.games.getBattleEvents, gameId ? { gameId } : "skip");
 
-      case 'api_key_valid': {
-        setIsValidating(false);
-        setApiKeyValid(true);
-        setSetupError(null);
-        setPhase('pre-battle');
-        break;
-      }
+  // ─── Convex Mutations ───────────────────────────────────────────────────────
 
-      case 'error': {
-        const data = message.data as { message: string };
-        setIsValidating(false);
-        setIsInitializing(false);
-        setSetupError(data.message);
-        break;
-      }
+  const createGameMutation = useMutation(api.games.createGame);
+  const setModelMutation = useMutation(api.games.setModel);
+  const setGameModeMutation = useMutation(api.games.setGameMode);
+  const initScenarioMutation = useMutation(api.games.initScenario);
+  const initBattleMutation = useMutation(api.games.initBattle);
+  const startBattleMutation = useMutation(api.games.startBattle);
+  const pauseBattleMutation = useMutation(api.games.pauseBattle);
+  const resumeBattleMutation = useMutation(api.games.resumeBattle);
+  const setSpeedMutation = useMutation(api.games.setSpeed);
 
-      case 'model_set': {
-        const data = message.data as { model: string };
-        setSelectedModel(data.model);
-        break;
-      }
+  // ─── Convex Actions ─────────────────────────────────────────────────────────
 
-      case 'game_mode_set': {
-        const data = message.data as { mode: GameMode };
-        setGameMode(data.mode);
-        break;
-      }
+  const validateApiKeyAction = useAction(api.llm.validateApiKey);
+  const sendBriefAction = useAction(api.llm.sendBrief);
+  const sendOrderAction = useAction(api.llm.sendOrder);
 
-      case 'lieutenants': {
-        const data = message.data as { lieutenants: Lieutenant[] };
-        setLieutenants(data.lieutenants);
-        // Auto-select first lieutenant if none selected
-        setSelectedLieutenant(prev => {
-          if (!prev && data.lieutenants.length > 0) return data.lieutenants[0]!.id;
-          return prev;
-        });
-        break;
-      }
+  // ─── Derived State ──────────────────────────────────────────────────────────
 
-      case 'scenario_ready': {
-        const data = message.data as {
-          troopInfo: Record<string, TroopInfo[]>;
-          mapSize: { width: number; height: number };
-        };
-        setTroopInfo(data.troopInfo);
-        setScenarioReady(true);
-        break;
-      }
+  const models: Model[] = gameData?.models || [];
+  const selectedModel = gameData?.model || '';
 
-      case 'state': {
-        const data = message.data as BattleState;
-        setBattleState(prev => {
-          prevBattleStateRef.current = prev;
-          return data;
-        });
-        break;
-      }
+  // Convert Convex query data to component-compatible formats
+  const battleState: BattleState = useMemo(() => {
+    if (!gameData?.clientBattleState) return emptyBattleState;
+    const cbs = gameData.clientBattleState;
+    return {
+      tick: cbs.tick,
+      agents: cbs.agents || [],
+      width: cbs.width,
+      height: cbs.height,
+      running: cbs.running,
+      winner: cbs.winner,
+      visibilityZones: 'visibilityZones' in cbs ? cbs.visibilityZones : undefined,
+      activeNodes: gameData.activeNodes,
+    };
+  }, [gameData?.clientBattleState, gameData?.activeNodes]);
 
-      case 'message': {
-        const data = message.data as Message;
-        setMessages(prev => [...prev, data]);
-        break;
-      }
+  // Track previous battle state for VFX
+  useEffect(() => {
+    prevBattleStateRef.current = battleState;
+  }, [battleState]);
 
-      case 'flowchart': {
-        const data = message.data as { lieutenantId: string; flowcharts: Record<string, Flowchart> };
-        setFlowcharts(prev => ({ ...prev, ...data.flowcharts }));
-        break;
-      }
+  const lieutenants: Lieutenant[] = useMemo(() => {
+    return (lieutenantsData || []).map(lt => ({
+      id: lt.id,
+      name: lt.name,
+      personality: lt.personality as Lieutenant['personality'],
+      troopIds: lt.troopIds,
+      busy: lt.busy,
+      stats: lt.stats,
+    }));
+  }, [lieutenantsData]);
 
-      case 'battle_event': {
-        const data = message.data as BattleEvent;
-        setBattleEvents(prev => [...prev, data]);
-        break;
-      }
-
-      case 'speed_set': {
-        const data = message.data as { speed: number };
-        setSpeed(data.speed);
-        break;
-      }
-
-      case 'battle_ready': {
-        setIsInitializing(false);
-        // Auto-start battle once briefing is complete
-        if (pendingBattleStart.current) {
-          pendingBattleStart.current = false;
-          sendRef.current({ type: 'start_battle', data: {} });
-        }
-        break;
-      }
-
-      case 'battle_started': {
-        const data = message.data as { gameMode?: GameMode };
-        if (data?.gameMode) setGameMode(data.gameMode);
-        setPhase('battle');
-        break;
-      }
-
-      case 'battle_paused': {
-        setIsPaused(true);
-        setBattleState(prev => ({ ...prev, running: false }));
-        break;
-      }
-
-      case 'battle_end': {
-        const data = message.data as { winner: 'player' | 'enemy'; summary: DetailedBattleSummary };
-        setBattleState(prev => ({ ...prev, winner: data.winner, running: false }));
-        setBattleSummary(data.summary);
-        setPhase('post-battle');
-        break;
-      }
-
-      case 'battle_resumed': {
-        setIsPaused(false);
-        setBattleState(prev => ({ ...prev, running: true }));
-        break;
-      }
+  // Auto-select first lieutenant
+  useEffect(() => {
+    if (!selectedLieutenant && lieutenants.length > 0) {
+      setSelectedLieutenant(lieutenants[0]!.id);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [lieutenants, selectedLieutenant]);
 
-  const { status, send } = useWebSocket(WS_URL, handleWSMessage);
+  const messages: Message[] = useMemo(() => {
+    return (messagesData || []).map(m => ({
+      id: m.messageId,
+      from: m.from,
+      to: m.to,
+      content: m.content,
+      timestamp: m.timestamp,
+      tick: m.tick,
+      type: m.messageType as Message['type'],
+    }));
+  }, [messagesData]);
 
-  // Keep sendRef in sync so handleWSMessage can call it without a dependency
-  sendRef.current = send;
+  const flowcharts: Record<string, Flowchart> = useMemo(() => {
+    if (!flowchartsData) return {};
+    const result: Record<string, Flowchart> = {};
+    for (const [key, value] of Object.entries(flowchartsData)) {
+      result[key] = value as Flowchart;
+    }
+    return result;
+  }, [flowchartsData]);
+
+  const battleEvents: BattleEvent[] = useMemo(() => {
+    return (battleEventsData || []).map(e => ({
+      type: e.eventType as BattleEvent['type'],
+      tick: e.tick,
+      team: e.team as BattleEvent['team'],
+      message: e.message,
+      position: e.position,
+    }));
+  }, [battleEventsData]);
+
+  // Sync phase from server
+  useEffect(() => {
+    if (gameData?.phase === 'post-battle' && phase === 'battle') {
+      // Compute summary from battle state
+      const agents = battleState.agents;
+      let playerAlive = 0, playerDead = 0, enemyAlive = 0, enemyDead = 0;
+      for (const a of agents) {
+        if (a.type !== 'troop') continue;
+        if (a.team === 'player') {
+          if (a.alive) playerAlive++; else playerDead++;
+        } else {
+          if (a.alive) enemyAlive++; else enemyDead++;
+        }
+      }
+      setBattleSummary({
+        tick: battleState.tick,
+        durationSeconds: battleState.tick / 10,
+        winner: battleState.winner,
+        player: { alive: playerAlive, dead: playerDead, total: playerAlive + playerDead },
+        enemy: { alive: enemyAlive, dead: enemyDead, total: enemyAlive + enemyDead },
+      });
+      setPhase('post-battle');
+    }
+  }, [gameData?.phase, phase, battleState]);
+
+  // ─── Handlers ───────────────────────────────────────────────────────────────
+
+  const handleSetApiKey = useCallback(async (apiKey: string) => {
+    setIsValidating(true);
+    setSetupError(null);
+
+    try {
+      // Create game if we don't have one yet
+      let id = gameId;
+      if (!id) {
+        id = await createGameMutation();
+        setGameId(id);
+      }
+
+      await validateApiKeyAction({ gameId: id, apiKey });
+      setIsValidating(false);
+      setApiKeyValid(true);
+      setSetupError(null);
+      setPhase('pre-battle');
+    } catch (err) {
+      setIsValidating(false);
+      setSetupError((err as Error).message);
+    }
+  }, [gameId, createGameMutation, validateApiKeyAction]);
+
+  const handleSetModel = useCallback(async (model: string) => {
+    if (gameId) {
+      await setModelMutation({ gameId, model });
+    }
+  }, [gameId, setModelMutation]);
+
+  const handleGameModeChange = useCallback(async (mode: GameMode) => {
+    setGameMode(mode);
+    if (gameId) {
+      await setGameModeMutation({ gameId, mode });
+    }
+  }, [gameId, setGameModeMutation]);
 
   // Initialize scenario when entering pre-battle phase
   const scenarioInitRef = useRef(false);
   useEffect(() => {
-    if (phase === 'pre-battle' && apiKeyValid && !scenarioReady && !scenarioInitRef.current) {
+    if (phase === 'pre-battle' && apiKeyValid && !scenarioReady && !scenarioInitRef.current && gameId) {
       scenarioInitRef.current = true;
-      send({ type: 'init_scenario', data: { scenario: 'basic' } });
+      initScenarioMutation({ gameId, scenario: 'basic' }).then((result) => {
+        if (result) {
+          setTroopInfo(result.troopInfo);
+          setScenarioReady(true);
+        }
+      });
     }
-  }, [phase, apiKeyValid, scenarioReady, send]);
+  }, [phase, apiKeyValid, scenarioReady, gameId, initScenarioMutation]);
 
-  // API Key handling
-  const handleSetApiKey = useCallback((apiKey: string) => {
-    setIsValidating(true);
-    setSetupError(null);
-    send({ type: 'set_api_key', data: { apiKey } });
-  }, [send]);
+  const handleSendBrief = useCallback(async (lieutenantId: string, message: string) => {
+    if (gameId) {
+      // Fire and forget - the action will update state reactively
+      sendBriefAction({ gameId, lieutenantId, message });
+    }
+  }, [gameId, sendBriefAction]);
 
-  const handleSetModel = useCallback((model: string) => {
-    send({ type: 'set_model', data: { model } });
-  }, [send]);
-
-  const handleGameModeChange = useCallback((mode: GameMode) => {
-    setGameMode(mode);
-    send({ type: 'set_game_mode', data: { mode } });
-  }, [send]);
-
-  // Pre-battle conversational briefing
-  const handleSendBrief = useCallback((lieutenantId: string, message: string) => {
-    send({ type: 'pre_battle_brief', data: { lieutenantId, message } });
-  }, [send]);
-
-  // Battle controls
-  const handleStartBattle = useCallback(() => {
+  const handleStartBattle = useCallback(async () => {
+    if (!gameId) return;
     setIsInitializing(true);
-    pendingBattleStart.current = true;
-    setBattleEvents([]);
-    send({
-      type: 'init_battle',
-      data: {
-        gameMode: gameModeRef.current,
+
+    try {
+      await initBattleMutation({
+        gameId,
+        gameMode,
         playerPersonality,
         enemyPersonality,
-      },
-    });
-    // start_battle will be sent automatically when battle_ready arrives
-  }, [send, playerPersonality, enemyPersonality]);
+      });
 
-  const handlePauseBattle = useCallback(() => {
+      await startBattleMutation({ gameId });
+      setIsInitializing(false);
+      setPhase('battle');
+    } catch (err) {
+      setIsInitializing(false);
+      console.error('Failed to start battle:', err);
+    }
+  }, [gameId, gameMode, playerPersonality, enemyPersonality, initBattleMutation, startBattleMutation]);
+
+  const handlePauseBattle = useCallback(async () => {
+    if (!gameId) return;
     if (isPaused) {
-      send({ type: 'resume_battle', data: {} });
+      await resumeBattleMutation({ gameId });
       setIsPaused(false);
-      setBattleState(prev => ({ ...prev, running: true }));
     } else {
-      send({ type: 'pause_battle', data: {} });
+      await pauseBattleMutation({ gameId });
       setIsPaused(true);
     }
-  }, [send, isPaused]);
+  }, [gameId, isPaused, pauseBattleMutation, resumeBattleMutation]);
 
-  const handleSetSpeed = useCallback((newSpeed: number) => {
-    send({ type: 'set_speed', data: { speed: newSpeed } });
-    setSpeed(newSpeed);
-  }, [send]);
+  const handleSetSpeed = useCallback(async (newSpeed: number) => {
+    if (gameId) {
+      await setSpeedMutation({ gameId, speed: newSpeed });
+      setSpeed(newSpeed);
+    }
+  }, [gameId, setSpeedMutation]);
 
-  const handleSendOrder = useCallback((lieutenantId: string, order: string) => {
-    send({ type: 'send_order', data: { lieutenantId, order } });
-  }, [send]);
+  const handleSendOrder = useCallback(async (lieutenantId: string, order: string) => {
+    if (gameId) {
+      sendOrderAction({ gameId, lieutenantId, order });
+    }
+  }, [gameId, sendOrderAction]);
 
-  const handleNewBattle = useCallback(() => {
+  const handleNewBattle = useCallback(async () => {
+    // Create a fresh game
+    const id = await createGameMutation();
+    setGameId(id);
     setPhase('pre-battle');
-    setMessages([]);
-    setFlowcharts({});
-    setBattleState(emptyBattleState);
+    setFlowchartsLocal({});
     setBattleSummary(null);
-    setBattleEvents([]);
     setSpeed(1);
     setTroopInfo({});
     setScenarioReady(false);
     scenarioInitRef.current = false;
-  }, []);
+    setApiKeyValid(false);
+    setPhase('setup');
+  }, [createGameMutation]);
+
+  // Placeholder for local flowchart state override (to avoid errors)
+  const [, setFlowchartsLocal] = useState<Record<string, Flowchart>>({});
 
   // Compute troop counts per lieutenant
   const troopCounts = useMemo(() => {
@@ -308,8 +319,9 @@ function App() {
     return counts;
   }, [lieutenants, battleState.agents]);
 
-  // Connection status indicator
-  const connectionStatus = status === 'connected' ? '\u{1F7E2}' : status === 'connecting' ? '\u{1F7E1}' : '\u{1F534}';
+  // Connection status (Convex is always connected when queries work)
+  const connectionStatus = gameData !== undefined ? '\u{1F7E2}' : '\u{1F7E1}';
+  const status = gameData !== undefined ? 'connected' : 'connecting';
 
   const isAiVsAi = gameMode === 'ai_vs_ai';
 

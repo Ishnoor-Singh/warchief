@@ -24,22 +24,28 @@ Keep these layers clean. They should communicate through defined interfaces only
 ## Repository Structure
 
 ```
-/client          React frontend
-  /battlefield   Phaser canvas, unit rendering
-  /flowchart-ui  Live flowchart visualization
-  /editor        Monaco-based flowchart editor
-  /comms         Message panel, speech UI
+/convex                 Convex backend (serverless functions + DB schema)
+  /schema.ts            Database schema
+  /games.ts             Game mutations + queries
+  /tick.ts              Simulation tick (scheduled internal mutation)
+  /llm.ts               LLM actions (Anthropic API calls)
+  /gameLogic/            Pure game logic (no Convex dependency)
+    /types.ts            Core types
+    /events.ts           Event vocabulary
+    /flowchart.ts        Flowchart runtime
+    /simulation.ts       Simulation loop
+    /scenario.ts         Scenario builders
+    /validation.ts       Zod schema validation
+    /inputBuilder.ts     Lieutenant prompt building
+    /compiler.ts         Flowchart compilation
+    /aiCommander.ts      AI commander logic
+    /lieutenant.ts       Lieutenant types/helpers
 
-/server
-  /sim           Simulation loop, combat resolution
-  /agents        Lieutenant LLM instances, agent state
-  /runtime       Flowchart compiler + event runtime
-  /api           REST + WebSocket endpoints
-
-/shared
-  /types         Shared TypeScript types
-  /events        Event vocabulary definitions
-  /schemas       Lieutenant output schemas
+/client                 React frontend (deployed on Vercel)
+  /src/components/      UI components (BattlefieldCanvas, MessagePanel, etc.)
+  /src/App.tsx           Main app (uses Convex hooks)
+  /src/main.tsx          Entry point (ConvexProvider)
+  /src/types/            Client-side types
 ```
 
 ## The Event System
@@ -115,15 +121,17 @@ They must respond with valid `LieutenantOutput` JSON. Include a system prompt se
 
 ## Simulation Loop
 
-Runs at 10 ticks/second. Each tick:
-1. Process all pending events for each agent
-2. Execute flowchart transitions
-3. Resolve combat (stat-based)
-4. Update visibility per agent
-5. Trigger LLM calls for any lieutenant with new messages (async, non-blocking)
-6. Emit state delta to frontend via WebSocket
+Runs at 10 ticks/second via Convex scheduled mutations. Each tick:
+1. Read full game state from single Convex document
+2. Process all pending events for each agent
+3. Execute flowchart transitions
+4. Resolve combat (stat-based)
+5. Update visibility per agent
+6. Write updated state back to Convex (triggers reactive client queries)
+7. Schedule next tick via `ctx.scheduler.runAfter()`
+8. Schedule AI commander LLM calls every 50 ticks (via Convex actions)
 
-LLM calls are async and non-blocking. Lieutenants continue running their current flowchart until new output arrives.
+LLM calls are Convex actions (async, non-blocking). Lieutenants continue running their current flowchart until new output arrives.
 
 ## Stats
 

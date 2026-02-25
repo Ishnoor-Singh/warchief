@@ -960,9 +960,9 @@ body {
 .landing-screen {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 80px 24px 48px;
+  padding: 100px 24px 48px;
   background: radial-gradient(ellipse at 50% 30%, #141428 0%, #0a0a0f 70%);
   overflow-y: auto;
 }

@@ -90,6 +90,11 @@ import {
   checkStalemate,
   type StalemateTracker,
 } from '../engine/stalemate.js';
+import {
+  createMessageBus,
+  send as busSend,
+  type MessageBus,
+} from '../comms/message-bus.js';
 import type { FlankedEvent } from '../../shared/events/index.js';
 
 const TICK_RATE = 10;  // ticks per second
@@ -144,6 +149,8 @@ export interface SimulationState {
   chargeApplied: Set<string>;
   /** Tracks ticks since last combat for stalemate detection. */
   stalemateTracker: StalemateTracker;
+  /** Central message bus for agent-to-agent communication. */
+  messageBus: MessageBus;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -186,6 +193,7 @@ export function createSimulation(
     wasMovingLastTick: new Set(),
     chargeApplied: new Set(),
     stalemateTracker: createStalemateTracker(),
+    messageBus: createMessageBus(),
   };
 }
 
@@ -375,10 +383,32 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
 
     case 'requestSupport':
       state.callbacks.onTroopMessage?.(agentId, 'requestSupport', action.message);
+      // Route to lieutenant via message bus
+      if (isTroop(agent) && agent.lieutenantId) {
+        busSend(state.messageBus, {
+          from: agentId,
+          to: agent.lieutenantId,
+          type: 'support_request',
+          payload: { message: action.message },
+          priority: 7,
+          tick: state.battle.tick,
+        });
+      }
       break;
 
     case 'emit':
       state.callbacks.onTroopMessage?.(agentId, action.eventType, action.message);
+      // Route reports/alerts to lieutenant via message bus
+      if (isTroop(agent) && agent.lieutenantId) {
+        busSend(state.messageBus, {
+          from: agentId,
+          to: agent.lieutenantId,
+          type: action.eventType === 'report' ? 'troop_report' : 'troop_alert',
+          payload: { message: action.message },
+          priority: action.eventType === 'alert' ? 8 : 3,
+          tick: state.battle.tick,
+        });
+      }
       break;
   }
 }
@@ -891,6 +921,16 @@ function updateStalemate(state: SimulationState): void {
       tick: state.battle.tick,
       team: 'player',
       message: 'The battle has stalled — forces are not engaging!',
+    });
+
+    // Broadcast stalemate warning to all lieutenants via message bus
+    busSend(state.messageBus, {
+      from: 'simulation',
+      to: null,  // broadcast
+      type: 'stalemate_warning',
+      payload: { message: 'Battle has stalled — forces are not engaging' },
+      priority: 9,
+      tick: state.battle.tick,
     });
   }
 

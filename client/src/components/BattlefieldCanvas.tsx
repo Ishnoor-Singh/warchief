@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import type { BattleState, Lieutenant } from '../types';
 
 interface Props {
@@ -8,7 +8,9 @@ interface Props {
   lieutenants: Lieutenant[];
 }
 
-const SCALE = 2;
+const BASE_SCALE = 2;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 4;
 
 // Distinct color palettes per lieutenant (for player side)
 const LIEUTENANT_COLORS: string[] = [
@@ -44,6 +46,77 @@ const vfxEffects: VFXEffect[] = [];
 export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieutenant, lieutenants }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number>(0);
+  
+  // Pan and zoom state
+  const [scale, setScale] = useState(BASE_SCALE);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  // Fit all troops in view
+  const fitAllTroops = useCallback(() => {
+    if (!battleState.agents.length) return;
+    
+    const aliveAgents = battleState.agents.filter(a => a.alive);
+    if (!aliveAgents.length) return;
+    
+    const xs = aliveAgents.map(a => a.position.x);
+    const ys = aliveAgents.map(a => a.position.y);
+    const minX = Math.min(...xs) - 20;
+    const maxX = Math.max(...xs) + 20;
+    const minY = Math.min(...ys) - 20;
+    const maxY = Math.max(...ys) + 20;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const spanX = maxX - minX;
+    const spanY = maxY - minY;
+    const newScale = Math.min(
+      canvas.width / spanX,
+      canvas.height / spanY,
+      MAX_SCALE
+    );
+    
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    
+    setScale(Math.max(newScale, MIN_SCALE));
+    setPanOffset({
+      x: canvas.width / 2 - centerX * newScale,
+      y: canvas.height / 2 - centerY * newScale,
+    });
+  }, [battleState.agents]);
+
+  // Mouse handlers for panning
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    setIsDragging(true);
+    dragStartRef.current = { x: e.clientX, y: e.clientY, panX: panOffset.x, panY: panOffset.y };
+  }, [panOffset]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    setPanOffset({ x: dragStartRef.current.panX + dx, y: dragStartRef.current.panY + dy });
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // Mouse wheel for zoom
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setScale(s => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s * delta)));
+  }, []);
+
+  // Reset view
+  const resetView = useCallback(() => {
+    setScale(BASE_SCALE);
+    setPanOffset({ x: 0, y: 0 });
+  }, []);
 
   // Detect new deaths and combat hits by diffing state
   useEffect(() => {
@@ -133,9 +206,9 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
         ctx.stroke();
       }
 
-      // Draw direction labels
-      ctx.font = '12px Inter, sans-serif';
-      ctx.fillStyle = '#4a5568';
+      // Draw direction labels (brighter for visibility)
+      ctx.font = 'bold 14px Inter, sans-serif';
+      ctx.fillStyle = '#8892a2';
       ctx.textAlign = 'center';
       
       // Top label
@@ -409,13 +482,36 @@ export function BattlefieldCanvas({ battleState, prevBattleState, selectedLieute
     };
   }, [battleState, selectedLieutenant, lieutenants]);
 
+  const SCALE = BASE_SCALE; // For now, keep canvas at base scale
+
   return (
-    <canvas
-      ref={canvasRef}
-      width={battleState.width * SCALE}
-      height={battleState.height * SCALE}
-      className="battlefield"
-    />
+    <div className="battlefield-container">
+      <div className="battlefield-controls">
+        <button onClick={fitAllTroops} title="Fit all troops in view">⊞ Fit All</button>
+        <button onClick={resetView} title="Reset view">↺ Reset</button>
+        <span className="zoom-level">{Math.round(scale / BASE_SCALE * 100)}%</span>
+      </div>
+      <div 
+        className="battlefield-viewport"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+        style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+      >
+        <canvas
+          ref={canvasRef}
+          width={battleState.width * SCALE}
+          height={battleState.height * SCALE}
+          className="battlefield"
+          style={{
+            transform: `scale(${scale / BASE_SCALE}) translate(${panOffset.x / (scale / BASE_SCALE)}px, ${panOffset.y / (scale / BASE_SCALE)}px)`,
+            transformOrigin: 'top left',
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

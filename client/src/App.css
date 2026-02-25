@@ -848,10 +848,50 @@ body {
 }
 
 /* Battlefield Canvas */
+.battlefield-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.battlefield-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.battlefield-controls button {
+  padding: 4px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.battlefield-controls button:hover {
+  border-color: var(--accent);
+  background: var(--bg-dark);
+}
+
+.battlefield-controls .zoom-level {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.battlefield-viewport {
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0d1117;
+}
+
 .battlefield {
   background: #0d1117;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  display: block;
 }
 
 /* Setup Screen */

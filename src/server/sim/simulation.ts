@@ -507,6 +507,7 @@ export interface FilteredBattleState {
     currentAction: string | null;
     formation: string;
     alive: boolean;
+    lieutenantId: string | null;
   }>;
   visibilityZones: VisibilityZone[];
   width: number;
@@ -561,6 +562,7 @@ export function getFilteredStateForTeam(state: SimulationState, team: Team): Fil
       currentAction: a.currentAction,
       formation: a.formation,
       alive: a.alive,
+      lieutenantId: a.lieutenantId,
     })),
     visibilityZones,
     width: state.battle.width,

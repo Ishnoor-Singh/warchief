@@ -1,103 +1,22 @@
-// Test scenario: Two armies with basic engage-on-sight flowcharts
+/**
+ * Battle scenarios for Warchief.
+ *
+ * Defines pre-built army configurations for testing and gameplay.
+ * Uses engine unit factories for consistent, well-defined agents.
+ */
 
-import { AgentState, TroopAgent, Vec2, Team, TroopStats, LieutenantStats } from '../../shared/types/index.js';
-import { Flowchart, createEngageOnSightFlowchart, createHoldPositionFlowchart, createLieutenantDefaultFlowchart } from '../runtime/flowchart.js';
-
-// Create a troop agent
-function createTroop(
-  id: string,
-  team: Team,
-  position: Vec2,
-  lieutenantId: string,
-  squadId: string,
-  stats?: Partial<TroopStats>
-): TroopAgent {
-  const defaultStats: TroopStats = {
-    combat: 5,
-    speed: 2,
-    courage: 5,
-    discipline: 5,
-  };
-
-  return {
-    id,
-    type: 'troop',
-    team,
-    position: { ...position },
-    health: 100,
-    maxHealth: 100,
-    morale: 100,
-    currentAction: 'holding',
-    targetPosition: null,
-    targetId: null,
-    formation: 'line',
-    visibilityRadius: 60,
-    stats: { ...defaultStats, ...stats },
-    lieutenantId,
-    squadId,
-    alive: true,
-  };
-}
-
-// Create a squad of troops in formation
-function createSquad(
-  baseId: string,
-  team: Team,
-  centerPosition: Vec2,
-  count: number,
-  lieutenantId: string,
-  squadId: string,
-  stats?: Partial<TroopStats>
-): TroopAgent[] {
-  const troops: TroopAgent[] = [];
-  const spacing = 15;
-  
-  // Arrange in a line
-  const startX = centerPosition.x - ((count - 1) * spacing) / 2;
-  
-  for (let i = 0; i < count; i++) {
-    const position: Vec2 = {
-      x: startX + i * spacing,
-      y: centerPosition.y,
-    };
-    troops.push(createTroop(`${baseId}_${i}`, team, position, lieutenantId, squadId, stats));
-  }
-  
-  return troops;
-}
-
-// Create a lieutenant simulation agent with elevated visibility radius
-function createLieutenantAgent(
-  id: string,
-  team: Team,
-  position: Vec2,
-  stats?: Partial<LieutenantStats>
-): AgentState {
-  const defaultStats: LieutenantStats = {
-    initiative: 5,
-    discipline: 5,
-    communication: 5,
-  };
-
-  return {
-    id,
-    type: 'lieutenant',
-    team,
-    position: { ...position },
-    health: 100,
-    maxHealth: 100,
-    morale: 100,
-    currentAction: 'holding',
-    targetPosition: null,
-    targetId: null,
-    formation: 'line',
-    visibilityRadius: 150,
-    stats: { ...defaultStats, ...stats },
-    lieutenantId: null,
-    squadId: null,
-    alive: true,
-  };
-}
+import { AgentState } from '../../shared/types/index.js';
+import {
+  Flowchart,
+  createEngageOnSightFlowchart,
+  createHoldPositionFlowchart,
+  createLieutenantDefaultFlowchart,
+} from '../runtime/flowchart.js';
+import {
+  createTroop,
+  createLieutenant,
+  createSquad,
+} from '../engine/index.js';
 
 export interface ScenarioSetup {
   agents: AgentState[];
@@ -106,104 +25,261 @@ export interface ScenarioSetup {
   height: number;
 }
 
-// Create the basic test scenario
-// Two armies facing each other, all with engage-on-sight behavior
+/**
+ * Basic scenario: Two armies facing each other.
+ *
+ * - 3 player squads of 10 troops each (30 total) on the left
+ * - 3 enemy squads of 10 troops each (30 total) on the right
+ * - All troops use engage-on-sight behavior
+ * - 3 player lieutenants, 2 enemy lieutenants
+ */
 export function createBasicScenario(): ScenarioSetup {
   const width = 400;
   const height = 300;
-  
+
   const agents: AgentState[] = [];
   const flowcharts: Flowchart[] = [];
-  
-  // Player army - left side
-  // 3 squads of 10 troops each, one per lieutenant
-  const playerSquad1 = createSquad('p_s1', 'player', { x: 80, y: 80 }, 10, 'lt_alpha', 'squad_1');
-  const playerSquad2 = createSquad('p_s2', 'player', { x: 80, y: 150 }, 10, 'lt_bravo', 'squad_2');
-  const playerSquad3 = createSquad('p_s3', 'player', { x: 80, y: 220 }, 10, 'lt_charlie', 'squad_3');
-  
-  // Lieutenant agents for player — positioned behind their squads, higher visibility radius
-  const ltAlpha = createLieutenantAgent('lt_alpha', 'player', { x: 20, y: 80 });
-  const ltBravo = createLieutenantAgent('lt_bravo', 'player', { x: 20, y: 150 });
-  const ltCharlie = createLieutenantAgent('lt_charlie', 'player', { x: 20, y: 220 });
+
+  // ── Player Army (left side) ─────────────────────────────────────────────
+
+  const playerSquad1 = createSquad('p_s1', 10, {
+    team: 'player',
+    centerPosition: { x: 80, y: 80 },
+    lieutenantId: 'lt_alpha',
+    squadId: 'squad_1',
+  });
+
+  const playerSquad2 = createSquad('p_s2', 10, {
+    team: 'player',
+    centerPosition: { x: 80, y: 150 },
+    lieutenantId: 'lt_bravo',
+    squadId: 'squad_2',
+  });
+
+  const playerSquad3 = createSquad('p_s3', 10, {
+    team: 'player',
+    centerPosition: { x: 80, y: 220 },
+    lieutenantId: 'lt_charlie',
+    squadId: 'squad_3',
+  });
+
+  const ltAlpha = createLieutenant({
+    id: 'lt_alpha',
+    team: 'player',
+    position: { x: 20, y: 80 },
+    name: 'Lt. Alpha',
+    preset: 'aggressive',
+    troopIds: playerSquad1.map(t => t.id),
+  });
+
+  const ltBravo = createLieutenant({
+    id: 'lt_bravo',
+    team: 'player',
+    position: { x: 20, y: 150 },
+    name: 'Lt. Bravo',
+    preset: 'disciplined',
+    troopIds: playerSquad2.map(t => t.id),
+  });
+
+  const ltCharlie = createLieutenant({
+    id: 'lt_charlie',
+    team: 'player',
+    position: { x: 20, y: 220 },
+    name: 'Lt. Charlie',
+    preset: 'cautious',
+    troopIds: playerSquad3.map(t => t.id),
+  });
 
   agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3, ltAlpha, ltBravo, ltCharlie);
 
-  // Enemy army - right side
-  // 3 squads of 10 troops each
-  const enemySquad1 = createSquad('e_s1', 'enemy', { x: 320, y: 80 }, 10, 'lt_enemy_1', 'enemy_squad_1');
-  const enemySquad2 = createSquad('e_s2', 'enemy', { x: 320, y: 150 }, 10, 'lt_enemy_1', 'enemy_squad_2');
-  const enemySquad3 = createSquad('e_s3', 'enemy', { x: 320, y: 220 }, 10, 'lt_enemy_2', 'enemy_squad_3');
+  // ── Enemy Army (right side) ─────────────────────────────────────────────
 
-  // Lieutenant agents for enemy — positioned behind their squads
-  const ltEnemy1 = createLieutenantAgent('lt_enemy_1', 'enemy', { x: 370, y: 115 });
-  const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 370, y: 220 });
+  const enemySquad1 = createSquad('e_s1', 10, {
+    team: 'enemy',
+    centerPosition: { x: 320, y: 80 },
+    lieutenantId: 'lt_enemy_1',
+    squadId: 'enemy_squad_1',
+  });
+
+  const enemySquad2 = createSquad('e_s2', 10, {
+    team: 'enemy',
+    centerPosition: { x: 320, y: 150 },
+    lieutenantId: 'lt_enemy_1',
+    squadId: 'enemy_squad_2',
+  });
+
+  const enemySquad3 = createSquad('e_s3', 10, {
+    team: 'enemy',
+    centerPosition: { x: 320, y: 220 },
+    lieutenantId: 'lt_enemy_2',
+    squadId: 'enemy_squad_3',
+  });
+
+  const ltEnemy1 = createLieutenant({
+    id: 'lt_enemy_1',
+    team: 'enemy',
+    position: { x: 370, y: 115 },
+    name: 'Enemy Commander 1',
+    preset: 'aggressive',
+    troopIds: [...enemySquad1.map(t => t.id), ...enemySquad2.map(t => t.id)],
+  });
+
+  const ltEnemy2 = createLieutenant({
+    id: 'lt_enemy_2',
+    team: 'enemy',
+    position: { x: 370, y: 220 },
+    name: 'Enemy Commander 2',
+    preset: 'disciplined',
+    troopIds: enemySquad3.map(t => t.id),
+  });
 
   agents.push(...enemySquad1, ...enemySquad2, ...enemySquad3, ltEnemy1, ltEnemy2);
 
-  // Create flowcharts for all agents
-  // Player troops: engage on sight (will advance toward enemy)
+  // ── Flowcharts ──────────────────────────────────────────────────────────
+
+  // Player troops: engage on sight, advance toward enemy side
   for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {
     flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 350, y: 150 }));
   }
 
-  // Enemy troops: hold position (defensive) - they advance toward player if no contact
+  // Enemy troops: engage on sight, advance toward player side
   for (const agent of [...enemySquad1, ...enemySquad2, ...enemySquad3]) {
     flowcharts.push(createEngageOnSightFlowchart(agent.id, { x: 50, y: 150 }));
   }
 
-  // Default flowcharts for lieutenant agents so they participate in the sim
-  for (const lt of [ltAlpha, ltBravo, ltEnemy1, ltEnemy2]) {
+  // All lieutenants get default flowcharts (FIX: ltCharlie was previously missing)
+  for (const lt of [ltAlpha, ltBravo, ltCharlie, ltEnemy1, ltEnemy2]) {
     flowcharts.push(createLieutenantDefaultFlowchart(lt.id));
   }
-  
+
   return { agents, flowcharts, width, height };
 }
 
-// Asymmetric scenario: player attacking fortified position
+/**
+ * Assault scenario: Player attacking a fortified position.
+ *
+ * - 3 player squads of 12 troops (36 total), lower combat stats
+ * - 2 enemy squads of 8 troops (16 total), higher combat stats
+ * - Player troops advance, enemy troops hold position
+ */
 export function createAssaultScenario(): ScenarioSetup {
   const width = 500;
   const height = 300;
-  
+
   const agents: AgentState[] = [];
   const flowcharts: Flowchart[] = [];
-  
-  // Player army - left side, attacking
-  // More troops, lower individual stats
-  const playerSquad1 = createSquad('p_s1', 'player', { x: 50, y: 80 }, 12, 'lt_alpha', 'squad_1', { combat: 4 });
-  const playerSquad2 = createSquad('p_s2', 'player', { x: 50, y: 150 }, 12, 'lt_bravo', 'squad_2', { combat: 4 });
-  const playerSquad3 = createSquad('p_s3', 'player', { x: 50, y: 220 }, 12, 'lt_charlie', 'squad_3', { combat: 4 });
-  
-  // Lieutenant agents for player — positioned behind their squads, higher visibility radius
-  const ltAlpha = createLieutenantAgent('lt_alpha', 'player', { x: 30, y: 80 });
-  const ltBravo = createLieutenantAgent('lt_bravo', 'player', { x: 30, y: 150 });
-  const ltCharlie = createLieutenantAgent('lt_charlie', 'player', { x: 30, y: 220 });
+
+  // ── Player Army (left side, attacking) ──────────────────────────────────
+
+  const playerSquad1 = createSquad('p_s1', 12, {
+    team: 'player',
+    centerPosition: { x: 50, y: 80 },
+    lieutenantId: 'lt_alpha',
+    squadId: 'squad_1',
+    stats: { combat: 4 },
+  });
+
+  const playerSquad2 = createSquad('p_s2', 12, {
+    team: 'player',
+    centerPosition: { x: 50, y: 150 },
+    lieutenantId: 'lt_bravo',
+    squadId: 'squad_2',
+    stats: { combat: 4 },
+  });
+
+  const playerSquad3 = createSquad('p_s3', 12, {
+    team: 'player',
+    centerPosition: { x: 50, y: 220 },
+    lieutenantId: 'lt_charlie',
+    squadId: 'squad_3',
+    stats: { combat: 4 },
+  });
+
+  const ltAlpha = createLieutenant({
+    id: 'lt_alpha',
+    team: 'player',
+    position: { x: 30, y: 80 },
+    name: 'Lt. Alpha',
+    preset: 'aggressive',
+    troopIds: playerSquad1.map(t => t.id),
+  });
+
+  const ltBravo = createLieutenant({
+    id: 'lt_bravo',
+    team: 'player',
+    position: { x: 30, y: 150 },
+    name: 'Lt. Bravo',
+    preset: 'disciplined',
+    troopIds: playerSquad2.map(t => t.id),
+  });
+
+  const ltCharlie = createLieutenant({
+    id: 'lt_charlie',
+    team: 'player',
+    position: { x: 30, y: 220 },
+    name: 'Lt. Charlie',
+    preset: 'cautious',
+    troopIds: playerSquad3.map(t => t.id),
+  });
 
   agents.push(...playerSquad1, ...playerSquad2, ...playerSquad3, ltAlpha, ltBravo, ltCharlie);
 
-  // Enemy army - right side, defending a ridge
-  // Fewer troops, higher stats, better position
-  const enemySquad1 = createSquad('e_s1', 'enemy', { x: 400, y: 120 }, 8, 'lt_enemy_1', 'enemy_squad_1', { combat: 7 });
-  const enemySquad2 = createSquad('e_s2', 'enemy', { x: 400, y: 180 }, 8, 'lt_enemy_2', 'enemy_squad_2', { combat: 7 });
+  // ── Enemy Army (right side, defending) ──────────────────────────────────
 
-  // Lieutenant agents for enemy
-  const ltEnemy1 = createLieutenantAgent('lt_enemy_1', 'enemy', { x: 420, y: 120 });
-  const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 420, y: 180 });
+  const enemySquad1 = createSquad('e_s1', 8, {
+    team: 'enemy',
+    centerPosition: { x: 400, y: 120 },
+    lieutenantId: 'lt_enemy_1',
+    squadId: 'enemy_squad_1',
+    preset: 'vanguard',
+    stats: { combat: 7 },
+  });
+
+  const enemySquad2 = createSquad('e_s2', 8, {
+    team: 'enemy',
+    centerPosition: { x: 400, y: 180 },
+    lieutenantId: 'lt_enemy_2',
+    squadId: 'enemy_squad_2',
+    preset: 'guardian',
+    stats: { combat: 7 },
+  });
+
+  const ltEnemy1 = createLieutenant({
+    id: 'lt_enemy_1',
+    team: 'enemy',
+    position: { x: 420, y: 120 },
+    name: 'Enemy Commander 1',
+    preset: 'disciplined',
+    troopIds: enemySquad1.map(t => t.id),
+  });
+
+  const ltEnemy2 = createLieutenant({
+    id: 'lt_enemy_2',
+    team: 'enemy',
+    position: { x: 420, y: 180 },
+    name: 'Enemy Commander 2',
+    preset: 'cautious',
+    troopIds: enemySquad2.map(t => t.id),
+  });
 
   agents.push(...enemySquad1, ...enemySquad2, ltEnemy1, ltEnemy2);
 
-  // Flowcharts
+  // ── Flowcharts ──────────────────────────────────────────────────────────
+
+  // Player troops: advance and engage
   for (const agent of [...playerSquad1, ...playerSquad2, ...playerSquad3]) {
     flowcharts.push(createEngageOnSightFlowchart(agent.id));
   }
 
+  // Enemy troops: hold position and defend
   for (const agent of [...enemySquad1, ...enemySquad2]) {
     flowcharts.push(createHoldPositionFlowchart(agent.id));
   }
 
-  // Default flowcharts for lieutenant agents so they participate in the sim
+  // All lieutenants get default flowcharts
   for (const lt of [ltAlpha, ltBravo, ltCharlie, ltEnemy1, ltEnemy2]) {
     flowcharts.push(createLieutenantDefaultFlowchart(lt.id));
   }
-  
+
   return { agents, flowcharts, width, height };
 }

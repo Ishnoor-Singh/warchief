@@ -7,13 +7,14 @@ import { SetupScreen } from './components/SetupScreen';
 import { EndScreen } from './components/EndScreen';
 import { LandingScreen } from './components/LandingScreen';
 import { InstructionsScreen } from './components/InstructionsScreen';
+import { FormationPlayground } from './components/FormationPlayground';
 import { ArmyStrengthHUD } from './components/ArmyStrengthHUD';
 import { BattleEventTicker } from './components/BattleEventTicker';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode, BattleEvent, TroopInfo } from './types';
 import './App.css';
 
-type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle';
+type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle' | 'playground';
 
 interface Model {
   id: string;
@@ -390,7 +391,10 @@ function App() {
         <LandingScreen
           onPlay={() => setPhase(apiKeyValid ? 'pre-battle' : 'setup')}
           onHowToPlay={() => setPhase('instructions')}
+          onPlayground={() => setPhase('playground')}
         />
+      ) : phase === 'playground' ? (
+        <FormationPlayground onBack={() => setPhase('landing')} />
       ) : phase === 'instructions' ? (
         <InstructionsScreen
           onBack={() => setPhase('landing')}

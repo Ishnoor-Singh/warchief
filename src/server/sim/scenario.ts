@@ -130,13 +130,13 @@ export function createBasicScenario(): ScenarioSetup {
 
   // Enemy army - right side
   // 3 squads of 10 troops each
-  const enemySquad1 = createSquad('e_s1', 'enemy', { x: 350, y: 100 }, 10, 'lt_enemy_1', 'enemy_squad_1');
-  const enemySquad2 = createSquad('e_s2', 'enemy', { x: 350, y: 150 }, 10, 'lt_enemy_1', 'enemy_squad_2');
-  const enemySquad3 = createSquad('e_s3', 'enemy', { x: 350, y: 200 }, 10, 'lt_enemy_2', 'enemy_squad_3');
+  const enemySquad1 = createSquad('e_s1', 'enemy', { x: 320, y: 80 }, 10, 'lt_enemy_1', 'enemy_squad_1');
+  const enemySquad2 = createSquad('e_s2', 'enemy', { x: 320, y: 150 }, 10, 'lt_enemy_1', 'enemy_squad_2');
+  const enemySquad3 = createSquad('e_s3', 'enemy', { x: 320, y: 220 }, 10, 'lt_enemy_2', 'enemy_squad_3');
 
   // Lieutenant agents for enemy — positioned behind their squads
-  const ltEnemy1 = createLieutenantAgent('lt_enemy_1', 'enemy', { x: 370, y: 125 });
-  const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 370, y: 200 });
+  const ltEnemy1 = createLieutenantAgent('lt_enemy_1', 'enemy', { x: 370, y: 115 });
+  const ltEnemy2 = createLieutenantAgent('lt_enemy_2', 'enemy', { x: 370, y: 220 });
 
   agents.push(...enemySquad1, ...enemySquad2, ...enemySquad3, ltEnemy1, ltEnemy2);
 

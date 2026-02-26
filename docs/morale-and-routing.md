@@ -83,6 +83,8 @@ Lieutenants can program responses to morale events:
 - `casualty_threshold` event fires at 25/50/75% squad losses
 - `ally_down` event fires when nearby allies die
 - `flanked` event fires when attacked from the side or rear
+- `morale_low` event fires when average squad morale drops below **40**, reporting `averageMorale` and `lowestMorale` — lets lieutenants trigger defensive behaviors, retreats, or formation changes before a cascade
+- `enemy_retreating` event fires when a visible enemy is routing, reporting `enemyId`, `position`, and `distance` — lets lieutenants opportunistically pursue or reposition
 
 Smart lieutenant briefings should include fallback plans for when morale collapses.
 

@@ -17,6 +17,11 @@ export const FlowchartNodeSchema = z.object({
     'tick',
     'arrived',
     'no_enemies_visible',
+    'formation_broken',
+    'morale_low',
+    'enemy_retreating',
+    'terrain_entered',
+    'terrain_exited',
   ]),
   condition: z.string().optional(),
   action: z.discriminatedUnion('type', [
@@ -76,6 +81,8 @@ export const LieutenantOutputSchema = z.object({
   self_directives: z.array(FlowchartDirectiveSchema).optional(),
   message_up: z.string().optional(), // report to commander
   message_peers: z.array(PeerMessageSchema).optional(),
+  response_to_player: z.string().optional(), // direct message to the player
+  updated_beliefs: z.record(z.string(), z.unknown()).optional(), // beliefs to persist in memory
 });
 
 export type LieutenantOutput = z.infer<typeof LieutenantOutputSchema>;

@@ -59,7 +59,7 @@ export function InstructionsScreen({ onBack, onPlay }: Props) {
                 <span className="step-number">2</span>
                 <div>
                   <h3>The War Room</h3>
-                  <p>Meet your lieutenants in the War Room. Review their personalities, stats, and assigned troops. Have a conversation with each &mdash; ask questions, give orders, discuss strategy. They'll respond and prepare their troops accordingly. Choose your game mode: command yourself or watch two AI commanders fight.</p>
+                  <p>Choose your scenario (Open Field, Hill Assault, or River Crossing), pick your game mode, and meet your lieutenants. Review their personalities, stats, and assigned troops. Have a conversation with each &mdash; ask questions, give orders, discuss strategy. They'll respond and prepare their troops accordingly.</p>
                 </div>
               </div>
               <div className="instruction-step">
@@ -210,6 +210,29 @@ export function InstructionsScreen({ onBack, onPlay }: Props) {
             </div>
           </section>
 
+          {/* Scenarios */}
+          <section className="instruction-section">
+            <h2>Scenarios</h2>
+            <p className="section-intro">Choose your battlefield before the fight begins.</p>
+            <div className="terrain-grid">
+              <div className="terrain-card">
+                <h3 style={{ color: '#66bb6a' }}>Open Field</h3>
+                <p><strong>Difficulty:</strong> Standard</p>
+                <p>Two balanced armies face each other. No terrain advantages. Pure tactical positioning and communication.</p>
+              </div>
+              <div className="terrain-card">
+                <h3 style={{ color: '#ff9800' }}>Hill Assault</h3>
+                <p><strong>Difficulty:</strong> Hard</p>
+                <p>Attack a fortified hilltop. More attackers, but defenders are stronger and hold the high ground.</p>
+              </div>
+              <div className="terrain-card">
+                <h3 style={{ color: '#f44336' }}>River Crossing</h3>
+                <p><strong>Difficulty:</strong> Expert</p>
+                <p>Cross a river to engage defenders. Forests provide flanking routes. Mixed unit types require diverse tactics.</p>
+              </div>
+            </div>
+          </section>
+
           {/* Terrain */}
           <section className="instruction-section">
             <h2>Terrain</h2>
@@ -357,6 +380,33 @@ export function InstructionsScreen({ onBack, onPlay }: Props) {
             </div>
           </section>
 
+          {/* Lieutenant Awareness */}
+          <section className="instruction-section">
+            <h2>Lieutenant Awareness</h2>
+            <p className="section-intro">Your lieutenants are more than order-followers. They observe, remember, and communicate proactively.</p>
+
+            <div className="mechanics-example">
+              <h3>Working Memory</h3>
+              <p>Lieutenants remember what happens during battle. They track enemy positions, threat assessments, and tactical observations across orders. This means they make better decisions as the battle progresses &mdash; they don't start from scratch each time you speak to them.</p>
+            </div>
+
+            <div className="mechanics-example">
+              <h3>Proactive Reports</h3>
+              <p>Lieutenants will message you without being asked. They'll warn about dangerous situations, report on progress, push back on risky orders, and share tactical observations. <strong>Read their messages carefully</strong> &mdash; they see things you might miss.</p>
+            </div>
+
+            <div className="mechanics-example">
+              <h3>Battlefield Events</h3>
+              <p>Lieutenants automatically react to what happens around them:</p>
+              <ul className="tips-list">
+                <li><strong>Formation broken</strong> &mdash; when too many troops are lost or scattered, the lieutenant may regroup or switch formations</li>
+                <li><strong>Morale dropping</strong> &mdash; when squad morale is dangerously low, the lieutenant can order retreats or defensive positions before a cascade</li>
+                <li><strong>Enemy retreating</strong> &mdash; when visible enemies rout, lieutenants can opportunistically pursue</li>
+                <li><strong>Terrain transitions</strong> &mdash; when troops enter or leave hills, forests, or rivers, formations and tactics can adjust automatically</li>
+              </ul>
+            </div>
+          </section>
+
           {/* Tips */}
           <section className="instruction-section">
             <h2>Command Tips</h2>
@@ -369,6 +419,7 @@ export function InstructionsScreen({ onBack, onPlay }: Props) {
               <li><strong>Terrain is everything.</strong> Hold hills, use forests for cover, and never fight in rivers.</li>
               <li><strong>Watch morale.</strong> A yellow pulsing unit is about to break. Low-courage troops near the front will cascade.</li>
               <li><strong>Formation choice matters.</strong> Switch to wedge for charges, circle for defense, and never fight in column.</li>
+              <li><strong>Listen to your lieutenants.</strong> They'll proactively warn you about threats and share tactical observations.</li>
               <li>Use the pause button if you need time to think and reassess the situation.</li>
             </ul>
           </section>

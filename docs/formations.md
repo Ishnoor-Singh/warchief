@@ -120,6 +120,20 @@ The strongest defensive positions combine formation and terrain bonuses:
 | Wedge charging through river | 1.40 * (1/0.8) = 1.75x | Nearly double damage taken |
 | Line on open ground | 1.0 * (1/1.0) = 1.0x | Baseline |
 
+## Formation Broken Event
+
+When a formation loses integrity, a `formation_broken` event fires:
+```ts
+formation_broken: { reason: 'casualties' | 'engagement' | 'routing', intactPercent: number }
+```
+
+This fires when fewer than **60%** of a lieutenant's troops remain in intact formation. The `reason` indicates why:
+- `casualties` — too many troops killed
+- `engagement` — troops pulled out of position by combat
+- `routing` — troops broke and fled
+
+Lieutenants can react to this event by switching to a more resilient formation (e.g., scatter or defensive_circle), falling back to regroup, or requesting support.
+
 ## Tactical Tips
 
 1. **Start in line** for balanced approach, switch to **wedge** when charging
@@ -128,3 +142,4 @@ The strongest defensive positions combine formation and terrain bonuses:
 4. **Scatter** when the enemy has concentrated firepower
 5. **Pincer** works best with a second group attacking from another angle
 6. Consider terrain — a **wedge charge through a river** is suicide
+7. **Watch for formation_broken** — if your formation falls apart, it may be time to regroup or switch to scatter

@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
 
-import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, applyInitialFormations, SimulationState, distance, BattleEvent } from './sim/simulation.js';
+import { createSimulation, simulationTick, getFilteredStateForTeam, getDetailedBattleSummary, applyInitialFormations, queueFlowchartSwap, SimulationState, distance, BattleEvent } from './sim/simulation.js';
 import { createBasicScenario, createAssaultScenario } from './sim/scenario.js';
 import { createLieutenant, processOrder, Lieutenant, LLMClient, OrderContext } from './agents/lieutenant.js';
 import { VisibleUnitInfo, VisibleEnemyInfo } from './agents/input-builder.js';
@@ -17,6 +17,19 @@ import { compileDirectives, applyFlowcharts } from './agents/compiler.js';
 import { createAICommander, generateCommanderOrders, AICommander } from './agents/ai-commander.js';
 import { Flowchart, FlowchartNode, FlowchartRuntime, createPersonalityFlowchart } from './runtime/flowchart.js';
 import { type TroopAgent, type TroopStats } from '../shared/types/index.js';
+import {
+  createCoordinator,
+  tickCoordinator,
+  recordCasualty,
+  recordSupportRequest,
+  recordPeerMessage,
+  recordStalemateWarning,
+  getLieutenantsNeedingReinvocation,
+  markLieutenantReinvoked,
+  buildEnrichedContext,
+  type GameCoordinator,
+} from './agents/coordinator.js';
+import { recordBattleEvents } from './agents/memory-recorder.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,6 +52,7 @@ interface GameSession {
   anthropicClient: LLMClient | null;
   aiCommanderInterval: number;           // How often AI commander acts (in ticks)
   speed: number;                         // Simulation speed multiplier (0.5, 1, 2)
+  coordinator: GameCoordinator | null;   // Reinvocation coordinator for all lieutenants
 }
 
 const sessions = new Map<WebSocket, GameSession>();
@@ -102,6 +116,7 @@ wss.on('connection', (ws) => {
     anthropicClient: serverAnthropicClient,
     aiCommanderInterval: AI_COMMANDER_INTERVAL,
     speed: 1,
+    coordinator: null,
   };
 
   sessions.set(ws, session);
@@ -143,6 +158,76 @@ function send(ws: WebSocket, message: unknown) {
   }
 }
 
+/** Maximum concurrent LLM re-invocation calls to prevent overload. */
+const MAX_CONCURRENT_REINVOCATIONS = 3;
+let activeReinvocations = 0;
+
+/**
+ * Fire-and-forget async LLM re-invocation for a lieutenant.
+ * Uses buildEnrichedContext to give the LLM full battlefield awareness,
+ * then applies the new flowcharts atomically.
+ */
+async function reinvokeLieutenant(session: GameSession, lt: Lieutenant): Promise<void> {
+  if (!session.anthropicClient || !session.simulation) return;
+  if (activeReinvocations >= MAX_CONCURRENT_REINVOCATIONS) return;
+
+  activeReinvocations++;
+  lt.busy = true;
+
+  try {
+    const context = buildEnrichedContext(
+      lt.id,
+      lt.lastOutput?.message_up || '',
+      session.simulation,
+      lt.authorizedPeers,
+    );
+
+    const result = await processOrder(lt, '[REINVOCATION] Reassess the battlefield situation and update orders as needed.', {
+      currentOrders: context.currentOrders,
+      visibleUnits: context.visibleUnits,
+      visibleEnemies: context.visibleEnemies,
+      terrain: context.terrain || 'Open battlefield',
+    }, session.anthropicClient);
+
+    if (result.success && result.output && session.simulation) {
+      const compiled = compileDirectives(result.output, lt.troopIds, lt.id);
+
+      // Queue flowchart swaps atomically (applied at start of next tick)
+      for (const [unitId, flowchart] of Object.entries(compiled.flowcharts)) {
+        queueFlowchartSwap(session.simulation, unitId, flowchart);
+      }
+
+      // Send updated flowchart to client (only for player lieutenants)
+      if (session.lieutenants.includes(lt)) {
+        const ltFlowchart = buildLieutenantFlowchart(lt.id, lt.troopIds, session.simulation.runtimes);
+        send(session.ws, {
+          type: 'flowchart',
+          data: { lieutenantId: lt.id, flowcharts: { [lt.id]: ltFlowchart } },
+        });
+      }
+
+      // If the lieutenant has a proactive message, send it
+      if (result.output.response_to_player && session.lieutenants.includes(lt)) {
+        send(session.ws, {
+          type: 'message',
+          data: {
+            id: `msg_${Date.now()}_reinvoke_${lt.id}`,
+            from: lt.id,
+            to: 'player',
+            content: result.output.response_to_player,
+            timestamp: Date.now(),
+            tick: session.simulation?.battle.tick ?? 0,
+            type: 'response',
+          },
+        });
+      }
+    }
+  } finally {
+    lt.busy = false;
+    activeReinvocations--;
+  }
+}
+
 // Shared simulation loop used by start_battle, resume_battle, and set_speed
 function createBattleInterval(session: GameSession): NodeJS.Timeout {
   const intervalMs = Math.round(100 / session.speed);
@@ -159,11 +244,33 @@ function createBattleInterval(session: GameSession): NodeJS.Timeout {
       return;
     }
 
-    // Drain and send battle events
+    // Drain and send battle events, feed to coordinator and memory recorder
     if (session.simulation.pendingBattleEvents.length > 0) {
       const events = session.simulation.pendingBattleEvents.splice(0);
       for (const evt of events) {
         send(session.ws, { type: 'battle_event', data: evt });
+
+        // Feed events to coordinator for reinvocation triggers
+        if (session.coordinator) {
+          if (evt.type === 'kill') {
+            // Find which lieutenant commands this dead troop
+            for (const lt of [...session.lieutenants, ...session.enemyLieutenants]) {
+              if (lt.troopIds.some(tid => evt.message.includes(tid))) {
+                recordCasualty(session.coordinator, lt.id);
+                break;
+              }
+            }
+          } else if (evt.type === 'stalemate_warning') {
+            recordStalemateWarning(session.coordinator);
+          }
+        }
+      }
+
+      // Record battle events in lieutenant memory (batch per lieutenant)
+      const allLts = [...session.lieutenants, ...session.enemyLieutenants];
+      for (const lt of allLts) {
+        const team = session.lieutenants.includes(lt) ? 'player' as const : 'enemy' as const;
+        recordBattleEvents(lt.memory, events, session.simulation.battle.tick, team);
       }
     }
 
@@ -194,6 +301,27 @@ function createBattleInterval(session: GameSession): NodeJS.Timeout {
       runAICommanderCycle(session, session.playerAICommander, session.lieutenants).catch(err => {
         console.error('Player AI Commander error:', err);
       });
+    }
+
+    // Tick coordinator (advance idle counters) and check reinvocation
+    if (session.coordinator && session.simulation.battle.running) {
+      tickCoordinator(session.coordinator);
+
+      // Check if any lieutenants need LLM re-invocation
+      const reinvokeIds = getLieutenantsNeedingReinvocation(session.coordinator);
+      for (const ltId of reinvokeIds) {
+        const lt = session.lieutenants.find(l => l.id === ltId)
+          || session.enemyLieutenants.find(l => l.id === ltId);
+        if (!lt || lt.busy) continue;
+
+        // Mark reinvoked immediately to prevent double-triggering
+        markLieutenantReinvoked(session.coordinator, ltId, session.simulation.battle.tick);
+
+        // Fire-and-forget async LLM re-call
+        reinvokeLieutenant(session, lt).catch(err => {
+          console.error(`Reinvocation error for ${ltId}:`, err);
+        });
+      }
     }
 
     // Check for battle end
@@ -260,6 +388,12 @@ async function handleMessage(session: GameSession, message: { type: string; data
     }
 
     case 'init_scenario': {
+      // Stop any running battle before re-initializing
+      if (session.timer) {
+        clearInterval(session.timer);
+        session.timer = null;
+      }
+
       // Initialize the scenario, create lieutenants and troops, but don't start the battle.
       // This allows the player to see troop info and have conversational briefings.
       const { scenario, gameMode, playerPersonality, enemyPersonality } = message.data as {
@@ -297,6 +431,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
             if (!agent) return;
             const lt = session.lieutenants.find(l => l.troopIds.includes(agentId))
               || session.enemyLieutenants.find(l => l.troopIds.includes(agentId));
+
+            // Route support requests to coordinator for reinvocation triggers
+            if (type === 'report' && message.toLowerCase().includes('support') && lt && session.coordinator) {
+              recordSupportRequest(session.coordinator, lt.id);
+            }
 
             if (agent.team === 'player') {
               send(ws, {
@@ -368,6 +507,13 @@ async function handleMessage(session: GameSession, message: { type: string; data
           authorizedPeers: ['lt_enemy_1'],
         }),
       ];
+
+      // Create coordinator with reinvocation trackers for all lieutenants
+      const allLtIds = [
+        ...session.lieutenants.map(lt => lt.id),
+        ...session.enemyLieutenants.map(lt => lt.id),
+      ];
+      session.coordinator = createCoordinator(allLtIds);
 
       // Apply personality-based default flowcharts for all player lieutenants' troops.
       // Advance target is on the enemy side (right half of map).
@@ -557,6 +703,11 @@ async function handleMessage(session: GameSession, message: { type: string; data
               if (!agent) return;
               const lt = session.lieutenants.find(l => l.troopIds.includes(agentId))
                 || session.enemyLieutenants.find(l => l.troopIds.includes(agentId));
+
+              // Route support requests to coordinator
+              if (type === 'report' && message.toLowerCase().includes('support') && lt && session.coordinator) {
+                recordSupportRequest(session.coordinator, lt.id);
+              }
 
               if (agent.team === 'player') {
                 send(ws, {

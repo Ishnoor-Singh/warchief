@@ -65,6 +65,7 @@ function App() {
   const [troopInfo, setTroopInfo] = useState<Record<string, TroopInfo[]>>({});
   const [scenarioReady, setScenarioReady] = useState(false);
   const [mapSize, setMapSize] = useState<{ width: number; height: number }>({ width: 400, height: 300 });
+  const [scenario, setScenario] = useState<'basic' | 'assault' | 'river_crossing'>('basic');
 
   // Ref to hold send function so handleWSMessage doesn't depend on it
   const sendRef = useRef<(message: unknown) => void>(() => {});
@@ -226,9 +227,9 @@ function App() {
   useEffect(() => {
     if (phase === 'pre-battle' && apiKeyValid && !scenarioReady && !scenarioInitRef.current) {
       scenarioInitRef.current = true;
-      send({ type: 'init_scenario', data: { scenario: 'basic' } });
+      send({ type: 'init_scenario', data: { scenario } });
     }
-  }, [phase, apiKeyValid, scenarioReady, send]);
+  }, [phase, apiKeyValid, scenarioReady, send, scenario]);
 
   // API Key handling
   const handleSetApiKey = useCallback((apiKey: string) => {
@@ -244,6 +245,19 @@ function App() {
   const handleGameModeChange = useCallback((mode: GameMode) => {
     setGameMode(mode);
     send({ type: 'set_game_mode', data: { mode } });
+  }, [send]);
+
+  const handleScenarioChange = useCallback((newScenario: 'basic' | 'assault' | 'river_crossing') => {
+    setScenario(newScenario);
+    // Reset scenario state and re-initialize with new scenario
+    setScenarioReady(false);
+    setTroopInfo({});
+    setFlowcharts({});
+    setMessages([]);
+    setLieutenants([]);
+    scenarioInitRef.current = false;
+    send({ type: 'init_scenario', data: { scenario: newScenario } });
+    scenarioInitRef.current = true;
   }, [send]);
 
   // Pre-battle conversational briefing
@@ -433,6 +447,8 @@ function App() {
           onUpdateLtConfig={handleUpdateLtConfig}
           onUpdateSquadStats={handleUpdateSquadStats}
           onUpdateFlowchartNode={handleUpdateFlowchartNode}
+          scenario={scenario}
+          onScenarioChange={handleScenarioChange}
         />
       ) : phase === 'post-battle' ? (
         <EndScreen

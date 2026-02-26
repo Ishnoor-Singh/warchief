@@ -112,23 +112,61 @@ export function queryRange(world: SpatialWorld, center: Vec2, range: number): st
 /**
  * Query all pairs of bodies within a given distance of each other.
  *
- * More efficient than checking all pairs when entities are sparse.
- * Returns pairs as [idA, idB] tuples.
+ * Uses a grid-based spatial hash to reduce pair checks from O(n²) to O(n×k)
+ * where k is the average number of neighbors per cell.
+ * Returns pairs as [idA, idB] tuples, deduplicated and sorted by label.
  */
 export function queryPairsInRange(world: SpatialWorld, range: number): Array<[string, string]> {
   const allBodies = Matter.Composite.allBodies(world.engine.world);
-  const pairs: Array<[string, string]> = [];
-  const rangeSq = range * range;
+  if (allBodies.length < 2) return [];
 
-  // Use Matter.js broadphase to reduce pair checks
-  for (let i = 0; i < allBodies.length; i++) {
-    const a = allBodies[i]!;
-    for (let j = i + 1; j < allBodies.length; j++) {
-      const b = allBodies[j]!;
-      const dx = a.position.x - b.position.x;
-      const dy = a.position.y - b.position.y;
-      if (dx * dx + dy * dy <= rangeSq) {
-        pairs.push([a.label, b.label]);
+  const cellSize = range; // Each cell is range×range
+  const rangeSq = range * range;
+  const pairs: Array<[string, string]> = [];
+  const seen = new Set<string>(); // "idA:idB" dedup
+
+  // Build grid: map cell key → list of bodies in that cell
+  const grid = new Map<string, Matter.Body[]>();
+  for (const body of allBodies) {
+    const cx = Math.floor(body.position.x / cellSize);
+    const cy = Math.floor(body.position.y / cellSize);
+    const key = `${cx},${cy}`;
+    let cell = grid.get(key);
+    if (!cell) {
+      cell = [];
+      grid.set(key, cell);
+    }
+    cell.push(body);
+  }
+
+  // Check each body against its own cell and 8 neighboring cells
+  for (const body of allBodies) {
+    const cx = Math.floor(body.position.x / cellSize);
+    const cy = Math.floor(body.position.y / cellSize);
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const neighborKey = `${cx + dx},${cy + dy}`;
+        const cell = grid.get(neighborKey);
+        if (!cell) continue;
+
+        for (const other of cell) {
+          if (other === body) continue;
+
+          // Sort labels for consistent dedup key
+          const [la, lb] = body.label < other.label
+            ? [body.label, other.label]
+            : [other.label, body.label];
+          const pairKey = `${la}:${lb}`;
+          if (seen.has(pairKey)) continue;
+
+          const ddx = body.position.x - other.position.x;
+          const ddy = body.position.y - other.position.y;
+          if (ddx * ddx + ddy * ddy <= rangeSq) {
+            seen.add(pairKey);
+            pairs.push([la, lb]);
+          }
+        }
       }
     }
   }

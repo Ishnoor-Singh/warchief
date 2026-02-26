@@ -37,7 +37,6 @@ function makeLt(id: string, team: 'player' | 'enemy', troopIds: string[]): Agent
     personality: 'disciplined',
     stats: { initiative: 5, discipline: 5, communication: 5 },
     troopIds,
-    authorizedPeers: [],
   });
 }
 
@@ -205,7 +204,11 @@ describe('morale_low event in simulation', () => {
     // Use morale 35 (below morale_low threshold of 40).
     // Test formation change instead of currentAction because routing can
     // override currentAction but not formation.
-    const troops = troopIds.map(id => makeTroop(id, 'player', 'lt_1', { morale: 35, courage: 10 }));
+    const troops = troopIds.map(id => {
+      const t = makeTroop(id, 'player', 'lt_1', { morale: 35 });
+      (t.stats as { courage: number }).courage = 10; // High courage prevents routing interference
+      return t;
+    });
     const flowcharts = [
       holdFlowchart('lt_1'),
       moraleLowFlowchart('t1'),

@@ -128,5 +128,43 @@ describe('Spatial World', () => {
       const pairs = queryPairsInRange(world, 50);
       expect(pairs).toHaveLength(0);
     });
+
+    it('handles many bodies efficiently with grid-based approach', () => {
+      world = createSpatialWorld();
+      // Create 200 bodies in a 500x300 space
+      for (let i = 0; i < 200; i++) {
+        addBody(world, `u${i}`, {
+          x: Math.random() * 500,
+          y: Math.random() * 300,
+        });
+      }
+
+      const start = performance.now();
+      const pairs = queryPairsInRange(world, 25);
+      const elapsed = performance.now() - start;
+
+      // Should complete in under 5ms for 200 bodies
+      expect(elapsed).toBeLessThan(5);
+      // Pairs should be valid (each pair within range)
+      for (const [a, b] of pairs) {
+        const bodyA = world.bodies.get(a)!;
+        const bodyB = world.bodies.get(b)!;
+        const dx = bodyA.position.x - bodyB.position.x;
+        const dy = bodyA.position.y - bodyB.position.y;
+        expect(dx * dx + dy * dy).toBeLessThanOrEqual(25 * 25);
+      }
+    });
+
+    it('finds all pairs in a cluster', () => {
+      world = createSpatialWorld();
+      // 4 bodies in a tight cluster — should find 6 pairs (C(4,2))
+      addBody(world, 'a', { x: 0, y: 0 });
+      addBody(world, 'b', { x: 5, y: 0 });
+      addBody(world, 'c', { x: 0, y: 5 });
+      addBody(world, 'd', { x: 5, y: 5 });
+
+      const pairs = queryPairsInRange(world, 10);
+      expect(pairs).toHaveLength(6);
+    });
   });
 });

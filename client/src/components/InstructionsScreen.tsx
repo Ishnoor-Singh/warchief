@@ -59,7 +59,7 @@ export function InstructionsScreen({ onBack, onPlay }: Props) {
                 <span className="step-number">2</span>
                 <div>
                   <h3>The War Room</h3>
-                  <p>Meet your lieutenants in the War Room. Review their personalities, stats, and assigned troops. Have a conversation with each &mdash; ask questions, give orders, discuss strategy. They'll respond and prepare their troops accordingly. Choose your game mode: command yourself or watch two AI commanders fight.</p>
+                  <p>Choose your scenario (Open Field, Hill Assault, or River Crossing), pick your game mode, and meet your lieutenants. Review their personalities, stats, and assigned troops. Have a conversation with each &mdash; ask questions, give orders, discuss strategy. They'll respond and prepare their troops accordingly.</p>
                 </div>
               </div>
               <div className="instruction-step">
@@ -207,6 +207,29 @@ export function InstructionsScreen({ onBack, onPlay }: Props) {
             <div className="mechanics-example">
               <h3>Recovery</h3>
               <p>Out-of-combat units recover <strong>+0.5 morale per tick</strong> (5/sec). Routing units that recover above 50 morale rejoin the fight.</p>
+            </div>
+          </section>
+
+          {/* Scenarios */}
+          <section className="instruction-section">
+            <h2>Scenarios</h2>
+            <p className="section-intro">Choose your battlefield before the fight begins.</p>
+            <div className="terrain-grid">
+              <div className="terrain-card">
+                <h3 style={{ color: '#66bb6a' }}>Open Field</h3>
+                <p><strong>Difficulty:</strong> Standard</p>
+                <p>Two balanced armies face each other. No terrain advantages. Pure tactical positioning and communication.</p>
+              </div>
+              <div className="terrain-card">
+                <h3 style={{ color: '#ff9800' }}>Hill Assault</h3>
+                <p><strong>Difficulty:</strong> Hard</p>
+                <p>Attack a fortified hilltop. More attackers, but defenders are stronger and hold the high ground.</p>
+              </div>
+              <div className="terrain-card">
+                <h3 style={{ color: '#f44336' }}>River Crossing</h3>
+                <p><strong>Difficulty:</strong> Expert</p>
+                <p>Cross a river to engage defenders. Forests provide flanking routes. Mixed unit types require diverse tactics.</p>
+              </div>
             </div>
           </section>
 

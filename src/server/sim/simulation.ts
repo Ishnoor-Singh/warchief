@@ -82,6 +82,7 @@ import {
 import {
   createTerrainMap,
   getTerrainModifiers,
+  getEffectiveVisibilityRadius,
   type TerrainMap,
 } from '../engine/terrain.js';
 import {
@@ -104,6 +105,15 @@ import {
   createTerrainTracker,
   type TerrainTracker,
 } from '../engine/event-detection.js';
+import {
+  createSpatialWorld,
+  addBody,
+  removeBody as spatialRemoveBody,
+  updateBodyPosition,
+  queryRange as spatialQueryRange,
+  destroySpatialWorld,
+  type SpatialWorld,
+} from '../engine/spatial.js';
 
 const TICK_RATE = 10;  // ticks per second
 const TICK_MS = 1000 / TICK_RATE;
@@ -161,6 +171,14 @@ export interface SimulationState {
   messageBus: MessageBus;
   /** Per-agent terrain tracking for terrain_entered/terrain_exited events. */
   terrainTracker: TerrainTracker;
+  /** Spatial index for efficient range queries (replaces O(n²) loops). */
+  spatialWorld: SpatialWorld;
+  /** Cached squad member lists per lieutenant ID (invalidated on death). */
+  squadMemberCache: Map<string, string[]>;
+  /** Dirty flag for squad member cache — set true when a troop dies. */
+  squadCacheDirty: boolean;
+  /** Pending flowchart swaps queued by async LLM calls, applied at tick start. */
+  pendingFlowchartSwaps: Array<{ unitId: string; flowchart: Flowchart }>;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -191,6 +209,12 @@ export function createSimulation(
     runtimes.set(flowchart.agentId, createFlowchartRuntime(flowchart));
   }
 
+  // Build spatial world with all agents
+  const spatialWorld = createSpatialWorld();
+  for (const agent of agents) {
+    addBody(spatialWorld, agent.id, agent.position);
+  }
+
   return {
     battle,
     runtimes,
@@ -205,6 +229,10 @@ export function createSimulation(
     stalemateTracker: createStalemateTracker(),
     messageBus: createMessageBus(),
     terrainTracker: createTerrainTracker(),
+    spatialWorld,
+    squadMemberCache: new Map(),
+    squadCacheDirty: true,  // Force initial build
+    pendingFlowchartSwaps: [],
   };
 }
 
@@ -215,6 +243,17 @@ export function simulationTick(state: SimulationState): void {
   const { battle, runtimes } = state;
 
   if (!battle.running) return;
+
+  // Apply any pending flowchart swaps from async LLM calls (atomic between ticks)
+  if (state.pendingFlowchartSwaps.length > 0) {
+    const swaps = state.pendingFlowchartSwaps.splice(0);
+    for (const { unitId, flowchart } of swaps) {
+      const runtime = runtimes.get(unitId);
+      if (runtime) {
+        runtime.flowchart = flowchart;
+      }
+    }
+  }
 
   battle.tick++;
 
@@ -249,7 +288,10 @@ export function simulationTick(state: SimulationState): void {
   // 4. Move agents toward their targets (with terrain speed modifiers)
   updateMovement(state);
 
-  // 5. Separate overlapping units — prevent units from stacking on same spot.
+  // 5. Sync spatial index with current positions
+  syncSpatialWorld(state);
+
+  // 5b. Separate overlapping units — prevent units from stacking on same spot.
   separateUnits(state);
 
   // 6. Resolve combat (with formation, flanking, terrain, and charge modifiers)
@@ -283,14 +325,41 @@ export function distance(a: Vec2, b: Vec2): number {
 
 // ─── Visibility ─────────────────────────────────────────────────────────────
 
-/** Get all enemies visible to an agent. */
+/**
+ * Get all enemies visible to an agent.
+ *
+ * Uses terrain-aware visibility: hills give the viewer a bonus,
+ * forests conceal the target (halving detection range).
+ * Uses spatial index for efficient candidate filtering.
+ */
 function getVisibleEnemies(state: SimulationState, agent: AgentState): VisibleEnemy[] {
-  const visible = engineGetVisibleEnemies(agent, state.battle.agents.values());
-  return visible.map(v => ({
-    enemyId: v.agent.id,
-    position: vecClone(v.agent.position),
-    distance: v.distance,
-  }));
+  // Use max possible visibility radius for spatial query (hill bonus)
+  const maxRadius = agent.visibilityRadius + 20; // MAX_VISIBILITY_BONUS from terrain
+  const candidateIds = spatialQueryRange(state.spatialWorld, agent.position, maxRadius);
+
+  const visible: VisibleEnemy[] = [];
+  for (const candidateId of candidateIds) {
+    if (candidateId === agent.id) continue;
+    const other = state.battle.agents.get(candidateId);
+    if (!other || !other.alive || other.team === agent.team) continue;
+
+    const dist = vecDistance(agent.position, other.position);
+    const effectiveRadius = getEffectiveVisibilityRadius(
+      agent.position, other.position, agent.visibilityRadius, state.terrain
+    );
+
+    if (dist <= effectiveRadius) {
+      visible.push({
+        enemyId: other.id,
+        position: vecClone(other.position),
+        distance: dist,
+      });
+    }
+  }
+
+  // Sort by distance (closest first)
+  visible.sort((a, b) => a.distance - b.distance);
+  return visible;
 }
 
 /** Update visibility and queue spotted events (throttled). */
@@ -548,6 +617,12 @@ function repositionInFormation(
 function maintainFormations(state: SimulationState): void {
   const { battle } = state;
 
+  // Rebuild squad member cache if dirty
+  if (state.squadCacheDirty) {
+    rebuildSquadMemberCache(state);
+    state.squadCacheDirty = false;
+  }
+
   for (const agent of battle.agents.values()) {
     if (!agent.alive || !isTroop(agent)) continue;
 
@@ -560,16 +635,13 @@ function maintainFormations(state: SimulationState): void {
     const lt = battle.agents.get(agent.lieutenantId);
     if (!lt?.alive) continue;
 
-    // Get all alive troops under this lieutenant, sorted for stable slot assignment
-    const teammates = Array.from(battle.agents.values())
-      .filter(a => isTroop(a) && a.lieutenantId === agent.lieutenantId && a.alive)
-      .sort((a, b) => a.id.localeCompare(b.id));
-
-    const index = teammates.findIndex(a => a.id === agent.id);
+    // Use cached squad members (sorted, alive only)
+    const teammateIds = state.squadMemberCache.get(agent.lieutenantId) ?? [];
+    const index = teammateIds.indexOf(agent.id);
     if (index === -1) continue;
 
     const facing = getTeamFacing(lt.team);
-    const rawPos = computeFormationSlot(agent.formation, lt.position, index, teammates.length, FORMATION_SPACING, facing);
+    const rawPos = computeFormationSlot(agent.formation, lt.position, index, teammateIds.length, FORMATION_SPACING, facing);
     const formationPos = clampToMap(rawPos, battle);
 
     // Only update target if it differs significantly from the current target
@@ -583,41 +655,75 @@ function maintainFormations(state: SimulationState): void {
   }
 }
 
+/** Rebuild the cached mapping of lieutenantId → sorted alive troop IDs. */
+function rebuildSquadMemberCache(state: SimulationState): void {
+  state.squadMemberCache.clear();
+  for (const agent of state.battle.agents.values()) {
+    if (!isTroop(agent) || !agent.alive) continue;
+    let members = state.squadMemberCache.get(agent.lieutenantId);
+    if (!members) {
+      members = [];
+      state.squadMemberCache.set(agent.lieutenantId, members);
+    }
+    members.push(agent.id);
+  }
+  // Sort each list for stable slot assignment
+  for (const members of state.squadMemberCache.values()) {
+    members.sort();
+  }
+}
+
+// ─── Spatial Index Sync ──────────────────────────────────────────────────────
+
+/** Sync spatial index positions with current agent positions. */
+function syncSpatialWorld(state: SimulationState): void {
+  for (const agent of state.battle.agents.values()) {
+    if (!agent.alive) continue;
+    updateBodyPosition(state.spatialWorld, agent.id, agent.position);
+  }
+}
+
 // ─── Unit Separation ────────────────────────────────────────────────────────
 
 /**
  * Push apart units that are overlapping or too close to each other.
  *
- * Runs every tick after movement. Prevents units from stacking on the same
- * position. Uses a simple repulsion force proportional to overlap depth.
- * Only applies to alive units. O(n²) — acceptable for ≤100 units.
+ * Uses spatial index for O(n×k) performance instead of O(n²).
+ * For each alive agent, queries nearby agents within UNIT_MIN_SEPARATION
+ * and applies repulsion forces to prevent stacking.
  */
 function separateUnits(state: SimulationState): void {
-  const { battle } = state;
-  const agents = Array.from(battle.agents.values()).filter(a => a.alive);
+  const { battle, spatialWorld } = state;
+  const sepSq = UNIT_MIN_SEPARATION * UNIT_MIN_SEPARATION;
 
-  for (let i = 0; i < agents.length; i++) {
-    for (let j = i + 1; j < agents.length; j++) {
-      const a = agents[i]!;
-      const b = agents[j]!;
+  for (const agent of battle.agents.values()) {
+    if (!agent.alive) continue;
 
-      const dx = b.position.x - a.position.x;
-      const dy = b.position.y - a.position.y;
+    const nearbyIds = spatialQueryRange(spatialWorld, agent.position, UNIT_MIN_SEPARATION);
+    for (const otherId of nearbyIds) {
+      if (otherId === agent.id) continue;
+      // Only process pair once: lower ID pushes
+      if (otherId < agent.id) continue;
+
+      const other = battle.agents.get(otherId);
+      if (!other || !other.alive) continue;
+
+      const dx = other.position.x - agent.position.x;
+      const dy = other.position.y - agent.position.y;
       const distSq = dx * dx + dy * dy;
 
-      if (distSq < UNIT_MIN_SEPARATION * UNIT_MIN_SEPARATION) {
+      if (distSq < sepSq) {
         if (distSq > 0.001) {
           const dist = Math.sqrt(distSq);
           const overlap = (UNIT_MIN_SEPARATION - dist) / 2;
           const pushX = (dx / dist) * overlap * UNIT_PUSH_FORCE;
           const pushY = (dy / dist) * overlap * UNIT_PUSH_FORCE;
 
-          a.position = clampToMap({ x: a.position.x - pushX, y: a.position.y - pushY }, battle);
-          b.position = clampToMap({ x: b.position.x + pushX, y: b.position.y + pushY }, battle);
+          agent.position = clampToMap({ x: agent.position.x - pushX, y: agent.position.y - pushY }, battle);
+          other.position = clampToMap({ x: other.position.x + pushX, y: other.position.y + pushY }, battle);
         } else {
-          // Identical positions — push one unit slightly in each axis
-          a.position = clampToMap({ x: a.position.x - UNIT_PUSH_FORCE, y: a.position.y }, battle);
-          b.position = clampToMap({ x: b.position.x + UNIT_PUSH_FORCE, y: b.position.y }, battle);
+          agent.position = clampToMap({ x: agent.position.x - UNIT_PUSH_FORCE, y: agent.position.y }, battle);
+          other.position = clampToMap({ x: other.position.x + UNIT_PUSH_FORCE, y: other.position.y }, battle);
         }
       }
     }
@@ -698,6 +804,42 @@ function updateMovement(state: SimulationState): void {
   }
 }
 
+// ─── Spatial Combat Pair Finding ─────────────────────────────────────────────
+
+/**
+ * Find combat pairs using spatial index instead of O(n²) nested loop.
+ *
+ * For each alive agent, queries the spatial index for nearby agents within
+ * COMBAT_RANGE, filters to cross-team pairs, and deduplicates.
+ */
+function findCombatPairsSpatial(state: SimulationState): Array<[AgentState, AgentState]> {
+  const { battle, spatialWorld } = state;
+  const pairs: Array<[AgentState, AgentState]> = [];
+  const seen = new Set<string>();
+
+  for (const agent of battle.agents.values()) {
+    if (!agent.alive) continue;
+
+    const nearbyIds = spatialQueryRange(spatialWorld, agent.position, COMBAT_RANGE);
+    for (const otherId of nearbyIds) {
+      if (otherId === agent.id) continue;
+
+      const other = battle.agents.get(otherId);
+      if (!other || !other.alive) continue;
+      if (other.team === agent.team) continue;
+
+      // Deduplicate: use sorted ID pair as key
+      const pairKey = agent.id < otherId ? `${agent.id}:${otherId}` : `${otherId}:${agent.id}`;
+      if (seen.has(pairKey)) continue;
+      seen.add(pairKey);
+
+      pairs.push([agent, other]);
+    }
+  }
+
+  return pairs;
+}
+
 // ─── Combat ─────────────────────────────────────────────────────────────────
 
 /**
@@ -710,8 +852,7 @@ function updateMovement(state: SimulationState): void {
  * - Charge momentum (moving units deal bonus first-hit damage)
  */
 function resolveCombat(state: SimulationState): void {
-  const agents = Array.from(state.battle.agents.values());
-  const combatPairs = findCombatPairs(agents);
+  const combatPairs = findCombatPairsSpatial(state);
 
   // Track which agents are in combat this tick (for morale recovery check)
   const inCombatThisTick = new Set<string>();
@@ -864,6 +1005,10 @@ function applySimDamage(state: SimulationState, agent: AgentState, result: Comba
   result.defenderDied = died;
 
   if (died) {
+    // Remove from spatial index and invalidate squad cache
+    spatialRemoveBody(state.spatialWorld, agent.id);
+    state.squadCacheDirty = true;
+
     // Emit kill battle event
     const teamLabel = agent.team === 'player' ? 'Your' : 'Enemy';
     state.pendingBattleEvents.push({
@@ -1179,7 +1324,10 @@ export function getFilteredStateForTeam(state: SimulationState, team: Team): Fil
     if (agent.team === team || !agent.alive) continue;
 
     for (const friendly of friendlyAgents) {
-      if (isWithinRange(agent.position, friendly.position, friendly.visibilityRadius)) {
+      const effectiveRadius = getEffectiveVisibilityRadius(
+        friendly.position, agent.position, friendly.visibilityRadius, state.terrain
+      );
+      if (isWithinRange(agent.position, friendly.position, effectiveRadius)) {
         visibleEnemies.push(agent);
         break;
       }
@@ -1224,6 +1372,18 @@ export interface DetailedBattleSummary {
   winner: Team | null;
   player: { alive: number; dead: number; total: number };
   enemy: { alive: number; dead: number; total: number };
+}
+
+/**
+ * Queue a flowchart swap to be applied atomically at the start of the next tick.
+ * Use this instead of directly mutating runtimes during async LLM callbacks.
+ */
+export function queueFlowchartSwap(
+  state: SimulationState,
+  unitId: string,
+  flowchart: Flowchart,
+): void {
+  state.pendingFlowchartSwaps.push({ unitId, flowchart });
 }
 
 export function getDetailedBattleSummary(state: SimulationState): DetailedBattleSummary {

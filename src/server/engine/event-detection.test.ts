@@ -8,7 +8,7 @@ import {
   MORALE_LOW_THRESHOLD,
   FORMATION_BROKEN_THRESHOLD,
 } from './event-detection.js';
-import { createTroop, createLieutenantAgent } from './unit-types.js';
+import { createTroop } from './unit-types.js';
 import { createTerrainMap, type TerrainFeature } from './terrain.js';
 import type { AgentState } from '../../shared/types/index.js';
 

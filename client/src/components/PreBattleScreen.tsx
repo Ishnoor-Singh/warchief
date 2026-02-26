@@ -22,6 +22,8 @@ interface Props {
   onUpdateLtConfig: (ltId: string, personality?: Lieutenant['personality'], stats?: Partial<LieutenantStats>) => void;
   onUpdateSquadStats: (squadId: string, stats: Partial<TroopStats>) => void;
   onUpdateFlowchartNode: (ltId: string, operation: 'add' | 'update' | 'delete', node?: FlowchartNode, nodeId?: string) => void;
+  scenario: 'basic' | 'assault' | 'river_crossing';
+  onScenarioChange: (scenario: 'basic' | 'assault' | 'river_crossing') => void;
 }
 
 const PERSONALITY_DESCRIPTIONS: Record<string, string> = {
@@ -378,6 +380,24 @@ function BriefingChat({
   );
 }
 
+const SCENARIO_INFO: Record<string, { name: string; description: string; difficulty: string }> = {
+  basic: {
+    name: 'Open Field',
+    description: 'Two armies face each other across open terrain. Balanced forces, no terrain advantages.',
+    difficulty: 'Standard',
+  },
+  assault: {
+    name: 'Hill Assault',
+    description: 'Attack a fortified hilltop position. Fewer but stronger defenders. Terrain favors the enemy.',
+    difficulty: 'Hard',
+  },
+  river_crossing: {
+    name: 'River Crossing',
+    description: 'Cross a river to engage defenders on high ground. Forests provide flanking cover. Mixed unit types.',
+    difficulty: 'Expert',
+  },
+};
+
 export function PreBattleScreen({
   lieutenants, onSendBrief, onStartBattle, isInitializing, messages,
   troopInfo, scenarioReady,
@@ -385,6 +405,7 @@ export function PreBattleScreen({
   onPlayerPersonalityChange, onEnemyPersonalityChange,
   flowcharts, mapSize,
   onUpdateLtConfig, onUpdateSquadStats, onUpdateFlowchartNode,
+  scenario, onScenarioChange,
 }: Props) {
   const [selectedLt, setSelectedLt] = useState<string>(lieutenants[0]?.id || 'lt_alpha');
   const [rightTab, setRightTab] = useState<'brief' | 'flowchart'>('brief');
@@ -437,6 +458,34 @@ export function PreBattleScreen({
         >
           AI vs AI
         </button>
+      </div>
+
+      {/* Scenario Picker */}
+      <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
+        {(Object.entries(SCENARIO_INFO) as [string, typeof SCENARIO_INFO[string]][]).map(([key, info]) => (
+          <button
+            key={key}
+            onClick={() => onScenarioChange(key as 'basic' | 'assault' | 'river_crossing')}
+            disabled={isInitializing}
+            style={{
+              padding: '10px 16px',
+              border: scenario === key ? '2px solid #66bb6a' : '2px solid #333',
+              background: scenario === key ? '#0a2010' : '#111',
+              color: scenario === key ? '#66bb6a' : '#888',
+              borderRadius: 8,
+              cursor: isInitializing ? 'not-allowed' : 'pointer',
+              textAlign: 'left',
+              maxWidth: 200,
+              minWidth: 160,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{info.name}</div>
+            <div style={{ fontSize: 11, opacity: 0.7, lineHeight: 1.3 }}>{info.description}</div>
+            <div style={{ fontSize: 10, marginTop: 4, color: scenario === key ? '#aaffaa' : '#666' }}>
+              Difficulty: {info.difficulty}
+            </div>
+          </button>
+        ))}
       </div>
 
       {/* Enemy personality selector */}

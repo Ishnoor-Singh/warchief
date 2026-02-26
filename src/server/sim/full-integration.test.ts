@@ -38,7 +38,6 @@ function makeLt(id: string, team: 'player' | 'enemy', troopIds: string[]): Agent
     personality: 'disciplined',
     stats: { initiative: 5, discipline: 5, communication: 5 },
     troopIds,
-    authorizedPeers: [],
   });
 }
 

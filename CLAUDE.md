@@ -33,7 +33,11 @@ Keep these layers clean. They should communicate through defined interfaces only
 /src/server
   /sim           Simulation loop, combat resolution, scenarios
   /agents        Lieutenant LLM instances, AI commander, agent state
+    - coordinator.ts    Game coordinator (reinvocation orchestration)
+    - reinvocation.ts   Lieutenant re-invocation trigger system
   /runtime       Flowchart compiler + event runtime
+  /comms         Agent communication infrastructure
+    - message-bus.ts    Typed, prioritized pub-sub for agent-to-agent comms
   /engine        Core game engine modules:
     - vec2.ts           Vector math
     - unit-types.ts     Unit definitions, presets, factories
@@ -45,6 +49,7 @@ Keep these layers clean. They should communicate through defined interfaces only
     - movement.ts       Agent movement, pursuit, arrival
     - spatial.ts        Spatial indexing (Matter.js backed)
     - conditions.ts     Safe condition evaluation (no eval)
+    - stalemate.ts      Stalemate detection and escalation
 
 /src/shared
   /types         Shared TypeScript types
@@ -101,19 +106,67 @@ emit('alert', message: string)
 ## Simulation Loop
 
 Runs at 10 ticks/second. Each tick:
-1. Track moving agents (for charge momentum detection)
-2. Update visibility and queue `enemy_spotted` / `no_enemies_visible` events (every 10 ticks)
-3. Process flowchart events for each agent (skip routing units)
-4. Maintain formations (reposition non-engaged troops around their lieutenant)
-5. Move agents toward targets (with terrain speed modifiers)
-6. Separate overlapping units
-7. Resolve combat (with formation, flanking, terrain, and charge modifiers)
-8. Check morale and trigger routing
-9. Recover morale for out-of-combat units
-10. Check win condition
-11. Fire callbacks
+1. Update visibility and queue `enemy_spotted` / `no_enemies_visible` events (every 10 ticks)
+2. Process flowchart events for each agent (skip routing units)
+3. Maintain formations (reposition non-engaged troops around their lieutenant)
+4. Move agents toward targets (with terrain speed modifiers)
+5. Separate overlapping units
+6. Resolve combat (with formation, flanking, terrain, and charge modifiers)
+7. Check morale and trigger routing
+8. Recover morale for out-of-combat units
+9. Check win condition
+10. Track moving agents (for charge momentum detection)
+11. **Stalemate detection and escalation**
+12. Fire callbacks
 
 LLM calls are async and non-blocking. Lieutenants continue running their current flowchart until new output arrives.
+
+## Message Bus
+
+Central typed pub-sub system for all agent-to-agent communication (`/src/server/comms/message-bus.ts`).
+
+```
+Troop → Lieutenant: support_request, troop_report, troop_alert
+Lieutenant ↔ Lieutenant: peer_message
+Simulation → All: stalemate_warning (broadcast)
+```
+
+Messages are prioritized (higher = processed first). Broadcasts (`to: null`) deliver to all subscribers except the sender. The bus is drained per-agent when building lieutenant context for LLM calls.
+
+## Stalemate Detection
+
+Tracks ticks since last combat damage (`/src/server/engine/stalemate.ts`):
+- **Warning (100 ticks / 10s)**: broadcasts `stalemate_warning` to all lieutenants via message bus
+- **Force advance (200 ticks / 20s)**: forces all troops to advance toward map center
+
+Any combat damage resets the tracker.
+
+## Lieutenant Re-invocation
+
+Lieutenants are not fire-and-forget. The re-invocation system (`/src/server/agents/reinvocation.ts`) tracks significant events and triggers LLM re-calls:
+
+| Trigger | Threshold | Cooldown |
+|---------|-----------|----------|
+| Troop casualties | 3 deaths | 50 ticks (5s) |
+| Support requests | 2 requests | 50 ticks (5s) |
+| Peer message arrival | 1 message | 50 ticks (5s) |
+| Stalemate warning | 1 event | 50 ticks (5s) |
+| Idle (no LLM call) | 150 ticks (15s) | N/A |
+
+The game coordinator (`/src/server/agents/coordinator.ts`) orchestrates this — tracking events, determining which lieutenants need re-invocation, and building enriched context with peer state and bus messages.
+
+## Lieutenant Prompt Context
+
+When a lieutenant LLM is called, the prompt includes:
+- Identity, personality, stats
+- Current orders
+- Units under command (position, health, morale)
+- Visible enemies
+- **Peer Status**: each authorized peer's position, troop count, morale, and current action
+- **Incoming Messages**: pending bus messages (support requests, peer comms, alerts)
+- Terrain description
+- Recent message history
+- Event/action vocabulary + output schema
 
 ## Combat System
 

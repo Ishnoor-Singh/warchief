@@ -84,6 +84,17 @@ import {
   getTerrainModifiers,
   type TerrainMap,
 } from '../engine/terrain.js';
+import {
+  createStalemateTracker,
+  recordCombat,
+  checkStalemate,
+  type StalemateTracker,
+} from '../engine/stalemate.js';
+import {
+  createMessageBus,
+  send as busSend,
+  type MessageBus,
+} from '../comms/message-bus.js';
 import type { FlankedEvent } from '../../shared/events/index.js';
 
 const TICK_RATE = 10;  // ticks per second
@@ -112,7 +123,7 @@ export interface SimulationCallbacks {
 
 /** Battle events for the client-side ticker. */
 export interface BattleEvent {
-  type: 'kill' | 'engagement' | 'retreat' | 'squad_wiped' | 'casualty_milestone';
+  type: 'kill' | 'engagement' | 'retreat' | 'squad_wiped' | 'casualty_milestone' | 'stalemate_warning' | 'stalemate_force_advance';
   tick: number;
   team: Team;
   message: string;
@@ -136,6 +147,10 @@ export interface SimulationState {
   wasMovingLastTick: Set<string>;
   /** Tracks agents that have already received their charge bonus (one-time). */
   chargeApplied: Set<string>;
+  /** Tracks ticks since last combat for stalemate detection. */
+  stalemateTracker: StalemateTracker;
+  /** Central message bus for agent-to-agent communication. */
+  messageBus: MessageBus;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -177,6 +192,8 @@ export function createSimulation(
     terrain: createTerrainMap(),
     wasMovingLastTick: new Set(),
     chargeApplied: new Set(),
+    stalemateTracker: createStalemateTracker(),
+    messageBus: createMessageBus(),
   };
 }
 
@@ -236,7 +253,10 @@ export function simulationTick(state: SimulationState): void {
   // 10. Track which agents are moving this tick (for charge bonus next tick)
   trackMovingAgents(state);
 
-  // 11. Callback
+  // 11. Stalemate detection and escalation
+  updateStalemate(state);
+
+  // 12. Callback
   state.onTick?.(state);
 }
 
@@ -363,10 +383,32 @@ function executeAction(state: SimulationState, agentId: string, action: GameActi
 
     case 'requestSupport':
       state.callbacks.onTroopMessage?.(agentId, 'requestSupport', action.message);
+      // Route to lieutenant via message bus
+      if (isTroop(agent) && agent.lieutenantId) {
+        busSend(state.messageBus, {
+          from: agentId,
+          to: agent.lieutenantId,
+          type: 'support_request',
+          payload: { message: action.message },
+          priority: 7,
+          tick: state.battle.tick,
+        });
+      }
       break;
 
     case 'emit':
       state.callbacks.onTroopMessage?.(agentId, action.eventType, action.message);
+      // Route reports/alerts to lieutenant via message bus
+      if (isTroop(agent) && agent.lieutenantId) {
+        busSend(state.messageBus, {
+          from: agentId,
+          to: agent.lieutenantId,
+          type: action.eventType === 'report' ? 'troop_report' : 'troop_alert',
+          payload: { message: action.message },
+          priority: action.eventType === 'alert' ? 8 : 3,
+          tick: state.battle.tick,
+        });
+      }
       break;
   }
 }
@@ -682,6 +724,9 @@ function resolveCombat(state: SimulationState): void {
 
     applySimDamage(state, b, resultA);
     applySimDamage(state, a, resultB);
+
+    // Combat occurred — reset stalemate tracker
+    recordCombat(state.stalemateTracker);
   }
 
   // Store in-combat set on state for morale recovery check
@@ -853,6 +898,60 @@ function recoverMorale(state: SimulationState): void {
     if (agent.currentAction === 'routing' && agent.morale >= 50) {
       agent.currentAction = 'holding';
       agent.targetPosition = null;
+    }
+  }
+}
+
+// ─── Stalemate Detection ────────────────────────────────────────────────────
+
+/**
+ * Increment the stalemate counter and handle escalation transitions.
+ *
+ * - Warning: emits a battle event that the server can relay to lieutenants
+ * - Force advance: sets all alive troops' targets to the map center
+ */
+function updateStalemate(state: SimulationState): void {
+  state.stalemateTracker.ticksSinceLastCombat++;
+
+  const status = checkStalemate(state.stalemateTracker);
+
+  if (status === 'warning') {
+    state.pendingBattleEvents.push({
+      type: 'stalemate_warning',
+      tick: state.battle.tick,
+      team: 'player',
+      message: 'The battle has stalled — forces are not engaging!',
+    });
+
+    // Broadcast stalemate warning to all lieutenants via message bus
+    busSend(state.messageBus, {
+      from: 'simulation',
+      to: null,  // broadcast
+      type: 'stalemate_warning',
+      payload: { message: 'Battle has stalled — forces are not engaging' },
+      priority: 9,
+      tick: state.battle.tick,
+    });
+  }
+
+  if (status === 'force_advance') {
+    state.pendingBattleEvents.push({
+      type: 'stalemate_force_advance',
+      tick: state.battle.tick,
+      team: 'player',
+      message: 'Both armies are forced to advance!',
+    });
+
+    const centerX = state.battle.width / 2;
+    const centerY = state.battle.height / 2;
+
+    for (const agent of state.battle.agents.values()) {
+      if (!agent.alive || agent.currentAction === 'routing') continue;
+      if (agent.type !== 'troop') continue;
+
+      agent.targetPosition = clampToMap({ x: centerX, y: centerY }, state.battle);
+      agent.currentAction = 'moving';
+      agent.targetId = null;
     }
   }
 }

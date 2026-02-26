@@ -494,6 +494,22 @@ async function handleCommand(session: HeadlessSession, message: { type: string; 
             },
           });
 
+          // Send response_to_player if the lieutenant has something to say directly
+          if (result.output.response_to_player) {
+            emit({
+              type: 'message',
+              data: {
+                id: `msg_${Date.now()}_resp`,
+                from: lieutenantId,
+                to: 'player',
+                content: result.output.response_to_player,
+                timestamp: Date.now(),
+                tick: session.simulation?.battle.tick ?? 0,
+                type: 'response',
+              },
+            });
+          }
+
           const compiled = compileDirectives(result.output, lieutenant.troopIds);
           if (session.simulation) {
             applyFlowcharts(compiled, session.simulation.runtimes);

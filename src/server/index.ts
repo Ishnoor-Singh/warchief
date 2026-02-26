@@ -782,7 +782,7 @@ async function handleMessage(session: GameSession, message: { type: string; data
         lieutenant.busy = false;
 
         if (result.success && result.output) {
-          // Send response
+          // Send report (message_up or default acknowledgment)
           send(ws, {
             type: 'message',
             data: {
@@ -795,6 +795,22 @@ async function handleMessage(session: GameSession, message: { type: string; data
               type: 'report',
             },
           });
+
+          // Send response_to_player if the lieutenant has something to say directly
+          if (result.output.response_to_player) {
+            send(ws, {
+              type: 'message',
+              data: {
+                id: `msg_${Date.now()}_resp`,
+                from: lieutenantId,
+                to: 'player',
+                content: result.output.response_to_player,
+                timestamp: Date.now(),
+                tick: session.simulation?.battle.tick ?? 0,
+                type: 'response',
+              },
+            });
+          }
 
           // Compile and apply flowcharts (including self_directives for the lieutenant)
           const compiled = compileDirectives(result.output, lieutenant.troopIds, lieutenant.id);

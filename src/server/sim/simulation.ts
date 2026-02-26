@@ -96,6 +96,14 @@ import {
   type MessageBus,
 } from '../comms/message-bus.js';
 import type { FlankedEvent } from '../../shared/events/index.js';
+import {
+  detectFormationBroken,
+  detectMoraleLow,
+  detectEnemyRetreating,
+  detectTerrainTransition,
+  createTerrainTracker,
+  type TerrainTracker,
+} from '../engine/event-detection.js';
 
 const TICK_RATE = 10;  // ticks per second
 const TICK_MS = 1000 / TICK_RATE;
@@ -151,6 +159,8 @@ export interface SimulationState {
   stalemateTracker: StalemateTracker;
   /** Central message bus for agent-to-agent communication. */
   messageBus: MessageBus;
+  /** Per-agent terrain tracking for terrain_entered/terrain_exited events. */
+  terrainTracker: TerrainTracker;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -194,6 +204,7 @@ export function createSimulation(
     chargeApplied: new Set(),
     stalemateTracker: createStalemateTracker(),
     messageBus: createMessageBus(),
+    terrainTracker: createTerrainTracker(),
   };
 }
 
@@ -209,6 +220,9 @@ export function simulationTick(state: SimulationState): void {
 
   // 1. Update visibility and queue enemy_spotted events
   updateVisibility(state);
+
+  // 1b. Detect expanded events (throttled to same interval as visibility)
+  detectExpandedEvents(state);
 
   // 2. Process flowchart events for each agent (skip routing units)
   for (const [agentId, runtime] of runtimes) {
@@ -304,6 +318,80 @@ function updateVisibility(state: SimulationState): void {
       queueEvent(runtime, event);
     } else {
       queueEvent(runtime, { type: 'no_enemies_visible' });
+    }
+  }
+}
+
+// ─── Expanded Event Detection ────────────────────────────────────────────────
+
+/** Interval for expanded event checks (same as visibility). */
+const EXPANDED_EVENT_INTERVAL = 10;
+
+/**
+ * Detect and queue expanded events: formation_broken, morale_low,
+ * enemy_retreating, terrain_entered/terrain_exited.
+ *
+ * Throttled to fire every EXPANDED_EVENT_INTERVAL ticks (1/sec),
+ * same cadence as visibility. This prevents event flooding while
+ * ensuring agents stay informed of tactical changes.
+ */
+function detectExpandedEvents(state: SimulationState): void {
+  if (state.battle.tick % EXPANDED_EVENT_INTERVAL !== 0) return;
+
+  const { battle, runtimes, terrain, terrainTracker } = state;
+  const allAgents = battle.agents.values();
+  const allAgentsArr = Array.from(battle.agents.values());
+
+  // Build set of lieutenant IDs for per-squad checks
+  const lieutenantIds = new Set<string>();
+  for (const agent of allAgentsArr) {
+    if (isLieutenant(agent) && agent.alive) {
+      lieutenantIds.add(agent.id);
+    }
+  }
+
+  // Per-lieutenant checks: formation_broken, morale_low
+  for (const ltId of lieutenantIds) {
+    const formationEvent = detectFormationBroken(ltId, allAgentsArr);
+    const moraleEvent = detectMoraleLow(ltId, allAgentsArr);
+
+    // Queue to all alive troops under this lieutenant
+    for (const agent of allAgentsArr) {
+      if (!isTroop(agent) || !agent.alive) continue;
+      if (agent.lieutenantId !== ltId) continue;
+
+      const runtime = runtimes.get(agent.id);
+      if (!runtime) continue;
+
+      if (formationEvent) queueEvent(runtime, formationEvent);
+      if (moraleEvent) queueEvent(runtime, moraleEvent);
+    }
+
+    // Also queue to the lieutenant's own runtime
+    const ltRuntime = runtimes.get(ltId);
+    if (ltRuntime) {
+      if (formationEvent) queueEvent(ltRuntime, formationEvent);
+      if (moraleEvent) queueEvent(ltRuntime, moraleEvent);
+    }
+  }
+
+  // Per-agent checks: enemy_retreating, terrain transitions
+  for (const agent of allAgentsArr) {
+    if (!agent.alive) continue;
+
+    const runtime = runtimes.get(agent.id);
+    if (!runtime) continue;
+
+    // Enemy retreating
+    const retreatEvents = detectEnemyRetreating(agent, allAgentsArr);
+    for (const event of retreatEvents) {
+      queueEvent(runtime, event);
+    }
+
+    // Terrain transitions
+    const terrainEvents = detectTerrainTransition(agent, terrain, terrainTracker);
+    for (const event of terrainEvents) {
+      queueEvent(runtime, event);
     }
   }
 }

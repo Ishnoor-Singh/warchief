@@ -58,6 +58,8 @@ export interface LieutenantContext {
   peerStates?: PeerStateInfo[];
   /** Pending messages from the bus (support requests, peer comms, etc.). */
   pendingBusMessages?: PendingBusMessageInfo[];
+  /** Working memory summary (beliefs + observations persisted across calls). */
+  memorySummary?: string;
 }
 
 const PERSONALITY_GUIDANCE: Record<LieutenantIdentity['personality'], string> = {
@@ -85,7 +87,9 @@ const OUTPUT_SCHEMA = `{
     }
   ],
   "message_up": "<optional: report to commander>",
-  "message_peers": [{ "to": "<peer_id>", "content": "<message>" }]
+  "message_peers": [{ "to": "<peer_id>", "content": "<message>" }],
+  "response_to_player": "<optional: message to the player — use for status reports, warnings, or pushback on orders>",
+  "updated_beliefs": { "<key>": "<value>" }
 }`;
 
 const EVENT_TYPES = [
@@ -98,6 +102,11 @@ const EVENT_TYPES = [
   'order_received — { order, from }',
   'arrived — { position }',
   'no_enemies_visible — {}',
+  'formation_broken — { reason: casualties|engagement|routing, intactPercent }',
+  'morale_low — { averageMorale, lowestMorale }',
+  'enemy_retreating — { enemyId, position: {x,y}, distance }',
+  'terrain_entered — { terrainType: hill|forest|river, position: {x,y} }',
+  'terrain_exited — { terrainType: hill|forest|river, position: {x,y} }',
 ];
 
 const ACTION_TYPES = [
@@ -111,7 +120,7 @@ const ACTION_TYPES = [
 ];
 
 export function buildLieutenantPrompt(context: LieutenantContext): string {
-  const { identity, currentOrders, visibleUnits, visibleEnemies, authorizedPeers, terrain, recentMessages, peerStates, pendingBusMessages } = context;
+  const { identity, currentOrders, visibleUnits, visibleEnemies, authorizedPeers, terrain, recentMessages, peerStates, pendingBusMessages, memorySummary } = context;
 
   const sections: string[] = [];
   
@@ -178,6 +187,13 @@ ${msgList}`);
   sections.push(`# Terrain
 ${terrain}`);
 
+  // Working memory (persisted across LLM calls)
+  if (memorySummary) {
+    sections.push(`# Working Memory
+This is your accumulated knowledge from previous assessments. Use it to inform decisions.
+${memorySummary}`);
+  }
+
   // Recent messages
   if (recentMessages.length > 0) {
     const messageList = recentMessages
@@ -210,6 +226,8 @@ Rules:
 5. Always include a fallback for "under_attack" (troops should defend themselves).
 6. Report important observations up to your commander via "message_up".
 7. Coordinate with authorized peers via "message_peers" when useful.
+8. Use "response_to_player" to report status, warn about dangers, or push back on risky orders.
+9. Use "updated_beliefs" to record key facts you want to remember (enemy positions, threat assessments, plans). These persist across calls.
 
 Think about what your troops should do in response to each event type. Write comprehensive flowcharts that handle edge cases.`);
 

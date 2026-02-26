@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { LieutenantStats } from '../../shared/types/index.js';
 import { buildLieutenantPrompt, LieutenantContext, RecentMessage, VisibleUnitInfo, VisibleEnemyInfo } from './input-builder.js';
 import { parseLieutenantOutput, LieutenantOutput } from './schema.js';
+import { createAgentMemory, setBelief, buildMemorySummary, type AgentMemory } from './memory.js';
 
 export interface LieutenantConfig {
   id: string;
@@ -24,6 +25,8 @@ export interface Lieutenant {
   messageHistory: RecentMessage[];
   busy: boolean;
   lastOutput: LieutenantOutput | null;
+  /** Working memory that persists across LLM calls. */
+  memory: AgentMemory;
 }
 
 export interface OrderContext {
@@ -75,6 +78,7 @@ export function createLieutenant(config: LieutenantConfig): Lieutenant {
     messageHistory: [],
     busy: false,
     lastOutput: null,
+    memory: createAgentMemory(config.id),
   };
 }
 
@@ -101,7 +105,8 @@ export async function processOrder(
     lieutenant.messageHistory = lieutenant.messageHistory.slice(-10);
   }
   
-  // Build the prompt
+  // Build the prompt (with working memory)
+  const memorySummary = buildMemorySummary(lieutenant.memory);
   const lieutenantContext: LieutenantContext = {
     identity: {
       id: lieutenant.id,
@@ -115,6 +120,9 @@ export async function processOrder(
     authorizedPeers: lieutenant.authorizedPeers,
     terrain: context.terrain,
     recentMessages: lieutenant.messageHistory,
+    memorySummary: lieutenant.memory.observations.length > 0 || lieutenant.memory.beliefs.size > 0
+      ? memorySummary
+      : undefined,
   };
   
   const systemPrompt = buildLieutenantPrompt(lieutenantContext);
@@ -132,8 +140,15 @@ export async function processOrder(
     
     if (result.success && result.output) {
       lieutenant.lastOutput = result.output;
+
+      // Apply updated beliefs to memory
+      if (result.output.updated_beliefs) {
+        for (const [key, value] of Object.entries(result.output.updated_beliefs)) {
+          setBelief(lieutenant.memory, key, value);
+        }
+      }
     }
-    
+
     lieutenant.busy = false;
     return result;
     

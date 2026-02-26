@@ -91,6 +91,14 @@ A **river** runs vertically through the center. Enemy holds a **hill** behind th
  (cover)
 ```
 
+## Terrain Events
+
+Units entering or leaving terrain features fire flowchart events:
+- `terrain_entered: { terrainType: 'hill' | 'forest' | 'river', position: Vec2 }` — fires when a unit moves into a terrain feature
+- `terrain_exited: { terrainType: 'hill' | 'forest' | 'river', position: Vec2 }` — fires when a unit leaves a terrain feature
+
+These events are tracked per-agent via a `TerrainTracker` and detected every 10 ticks. Lieutenants can program reactions to terrain transitions — for example, switching to defensive_circle when entering a hill, or scatter when crossing a river.
+
 ## Implementation Details
 
 Terrain features are axis-aligned rectangles defined by:

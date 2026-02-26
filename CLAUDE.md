@@ -35,6 +35,8 @@ Keep these layers clean. They should communicate through defined interfaces only
   /agents        Lieutenant LLM instances, AI commander, agent state
     - coordinator.ts    Game coordinator (reinvocation orchestration)
     - reinvocation.ts   Lieutenant re-invocation trigger system
+    - memory.ts         Agent working memory (beliefs + observations)
+    - memory-recorder.ts  Auto-records battle events as observations
   /runtime       Flowchart compiler + event runtime
   /comms         Agent communication infrastructure
     - message-bus.ts    Typed, prioritized pub-sub for agent-to-agent comms
@@ -50,6 +52,7 @@ Keep these layers clean. They should communicate through defined interfaces only
     - spatial.ts        Spatial indexing (Matter.js backed)
     - conditions.ts     Safe condition evaluation (no eval)
     - stalemate.ts      Stalemate detection and escalation
+    - event-detection.ts  Expanded event detection (formation, morale, terrain)
 
 /src/shared
   /types         Shared TypeScript types
@@ -86,7 +89,19 @@ order_received: { order: string, from: string }
 tick: { tick: number }
 arrived: { position: Vec2 }
 no_enemies_visible: {}
+formation_broken: { reason: 'casualties' | 'engagement' | 'routing', intactPercent: number }
+morale_low: { averageMorale: number, lowestMorale: number }
+enemy_retreating: { enemyId: string, position: Vec2, distance: number }
+terrain_entered: { terrainType: 'hill' | 'forest' | 'river', position: Vec2 }
+terrain_exited: { terrainType: 'hill' | 'forest' | 'river', position: Vec2 }
 ```
+
+### Expanded Event Detection
+The simulation detects and fires expanded events every 10 ticks (`/src/server/engine/event-detection.ts`):
+- **formation_broken**: Fires when <60% of a lieutenant's troops are in intact formation (due to casualties, engagement, or routing)
+- **morale_low**: Fires when average squad morale drops below 40
+- **enemy_retreating**: Fires when a visible enemy unit is routing
+- **terrain_entered/terrain_exited**: Fires when a unit moves into or out of a terrain feature. Tracked per-agent via `TerrainTracker`
 
 ### Actions (outputs from an agent)
 ```ts
@@ -107,6 +122,7 @@ emit('alert', message: string)
 
 Runs at 10 ticks/second. Each tick:
 1. Update visibility and queue `enemy_spotted` / `no_enemies_visible` events (every 10 ticks)
+1b. **Detect expanded events** (formation_broken, morale_low, enemy_retreating, terrain transitions — every 10 ticks)
 2. Process flowchart events for each agent (skip routing units)
 3. Maintain formations (reposition non-engaged troops around their lieutenant)
 4. Move agents toward targets (with terrain speed modifiers)
@@ -155,6 +171,27 @@ Lieutenants are not fire-and-forget. The re-invocation system (`/src/server/agen
 
 The game coordinator (`/src/server/agents/coordinator.ts`) orchestrates this — tracking events, determining which lieutenants need re-invocation, and building enriched context with peer state and bus messages.
 
+## Agent Working Memory
+
+Lieutenants have persistent working memory (`/src/server/agents/memory.ts`) that accumulates across LLM calls:
+
+- **Beliefs**: Named key-value pairs the LLM can read and write (enemy positions, threat levels, plans)
+- **Observations**: Rolling log of significant events (capped at 20, oldest evicted)
+
+### Memory Recorder
+The memory recorder (`/src/server/agents/memory-recorder.ts`) automatically records battle events as observations in lieutenant memory. Recorded event types:
+- `kill` → casualty observation
+- `retreat` → routing observation
+- `squad_wiped` → squad_wiped observation
+- `engagement` → engagement observation
+- `casualty_milestone` → casualties observation
+- `stalemate_warning` → stalemate observation
+
+Only events matching the lieutenant's team are recorded (stalemate warnings are recorded for all teams).
+
+### Memory in Prompts
+The `buildMemorySummary()` function formats beliefs and observations into a human-readable "Working Memory" section included in the lieutenant prompt. This lets the LLM reason about what it has learned over the battle.
+
 ## Lieutenant Prompt Context
 
 When a lieutenant LLM is called, the prompt includes:
@@ -165,6 +202,7 @@ When a lieutenant LLM is called, the prompt includes:
 - **Peer Status**: each authorized peer's position, troop count, morale, and current action
 - **Incoming Messages**: pending bus messages (support requests, peer comms, alerts)
 - Terrain description
+- **Working Memory**: accumulated beliefs and observations from previous calls
 - Recent message history
 - Event/action vocabulary + output schema
 
@@ -254,8 +292,22 @@ type LieutenantOutput = {
   self_directives?: FlowchartDirective[]
   message_up?: string
   message_peers?: { to: string, content: string }[]
+  response_to_player?: string      // proactive message to the player
+  updated_beliefs?: Record<string, unknown>  // persist knowledge across calls
 }
 ```
+
+### Agent-Initiated Messages
+Lieutenants can proactively message the player via `response_to_player`. This enables:
+- Status reports without being asked
+- Warnings about dangerous situations
+- Pushback on risky orders
+- Tactical observations
+
+Messages are delivered via WebSocket (or NDJSON in headless mode) as `type: 'response'` messages.
+
+### Belief Updates
+Lieutenants can persist knowledge by including `updated_beliefs` in their output. These key-value pairs are stored in the agent's working memory and included in subsequent prompts.
 
 ## Key Design Rules
 

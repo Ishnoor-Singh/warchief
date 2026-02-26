@@ -179,6 +179,8 @@ export interface SimulationState {
   squadCacheDirty: boolean;
   /** Pending flowchart swaps queued by async LLM calls, applied at tick start. */
   pendingFlowchartSwaps: Array<{ unitId: string; flowchart: Flowchart }>;
+  /** Tracks last message tick per agent to prevent message spam (50 tick cooldown). */
+  lastMessageTick: Map<string, number>;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -233,6 +235,7 @@ export function createSimulation(
     squadMemberCache: new Map(),
     squadCacheDirty: true,  // Force initial build
     pendingFlowchartSwaps: [],
+    lastMessageTick: new Map(),
   };
 }
 

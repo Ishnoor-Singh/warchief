@@ -2,9 +2,10 @@ interface Props {
   onPlay: () => void;
   onHowToPlay: () => void;
   onPlayground?: () => void;
+  onReplay?: () => void;
 }
 
-export function LandingScreen({ onPlay, onHowToPlay, onPlayground }: Props) {
+export function LandingScreen({ onPlay, onHowToPlay, onPlayground, onReplay }: Props) {
   return (
     <div className="landing-screen">
       <div className="landing-content">
@@ -30,6 +31,11 @@ export function LandingScreen({ onPlay, onHowToPlay, onPlayground }: Props) {
           {onPlayground && (
             <button className="landing-how-btn" onClick={onPlayground}>
               Formation Playground
+            </button>
+          )}
+          {onReplay && (
+            <button className="landing-how-btn" onClick={onReplay}>
+              ⏮️ Watch Replay
             </button>
           )}
         </div>

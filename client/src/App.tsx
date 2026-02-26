@@ -10,11 +10,12 @@ import { InstructionsScreen } from './components/InstructionsScreen';
 import { FormationPlayground } from './components/FormationPlayground';
 import { ArmyStrengthHUD } from './components/ArmyStrengthHUD';
 import { BattleEventTicker } from './components/BattleEventTicker';
+import { ReplayScreen } from './components/ReplayScreen';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { BattleState, Lieutenant, Message, Flowchart, DetailedBattleSummary, GameMode, BattleEvent, TroopInfo } from './types';
 import './App.css';
 
-type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle' | 'playground';
+type GamePhase = 'landing' | 'instructions' | 'setup' | 'pre-battle' | 'battle' | 'post-battle' | 'playground' | 'replay';
 
 interface Model {
   id: string;
@@ -46,6 +47,7 @@ function App() {
   const [battleSummary, setBattleSummary] = useState<DetailedBattleSummary | null>(null);
   const [battleEvents, setBattleEvents] = useState<BattleEvent[]>([]);
   const [speed, setSpeed] = useState(1);
+  const [battleHistory, setBattleHistory] = useState<BattleState[]>([]);
 
   // Setup state
   const [models, setModels] = useState<Model[]>([]);
@@ -150,6 +152,10 @@ function App() {
           prevBattleStateRef.current = prev;
           return data;
         });
+        // Record for replay export (every 5th tick to keep size reasonable)
+        if (data.tick % 5 === 0) {
+          setBattleHistory(prev => [...prev, data]);
+        }
         break;
       }
 
@@ -308,6 +314,7 @@ function App() {
     setBattleState(emptyBattleState);
     setBattleSummary(null);
     setBattleEvents([]);
+    setBattleHistory([]);
     setSpeed(1);
     setTroopInfo({});
     setScenarioReady(false);
@@ -406,9 +413,12 @@ function App() {
           onPlay={() => setPhase(apiKeyValid ? 'pre-battle' : 'setup')}
           onHowToPlay={() => setPhase('instructions')}
           onPlayground={() => setPhase('playground')}
+          onReplay={() => setPhase('replay')}
         />
       ) : phase === 'playground' ? (
         <FormationPlayground onBack={() => setPhase('landing')} />
+      ) : phase === 'replay' ? (
+        <ReplayScreen onBack={() => setPhase('landing')} />
       ) : phase === 'instructions' ? (
         <InstructionsScreen
           onBack={() => setPhase('landing')}
@@ -454,6 +464,7 @@ function App() {
         <EndScreen
           summary={battleSummary}
           messages={messages}
+          battleHistory={battleHistory}
           onNewBattle={handleNewBattle}
         />
       ) : (

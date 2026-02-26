@@ -1,13 +1,52 @@
-import type { DetailedBattleSummary, Message } from '../types';
+import type { DetailedBattleSummary, Message, BattleState } from '../types';
 
 interface Props {
   summary: DetailedBattleSummary | null;
   messages: Message[];
+  battleHistory: BattleState[];
   onNewBattle: () => void;
 }
 
-export function EndScreen({ summary, messages, onNewBattle }: Props) {
+export function EndScreen({ summary, messages, battleHistory, onNewBattle }: Props) {
   const isVictory = summary?.winner === 'player';
+
+  const handleExportReplay = () => {
+    // Build NDJSON replay file
+    const lines: string[] = [];
+    
+    // Add ready info
+    lines.push(JSON.stringify({
+      type: 'ready',
+      data: {
+        scenario: 'recorded_battle',
+        battlefield: battleHistory[0] ? { width: battleHistory[0].width, height: battleHistory[0].height } : { width: 400, height: 300 },
+      }
+    }));
+    
+    // Add all state frames
+    for (const state of battleHistory) {
+      lines.push(JSON.stringify({ type: 'state', data: state }));
+    }
+    
+    // Add battle end if we have a summary
+    if (summary) {
+      lines.push(JSON.stringify({
+        type: 'battle_end',
+        data: { winner: summary.winner, summary }
+      }));
+    }
+    
+    // Download as file
+    const blob = new Blob([lines.join('\n')], { type: 'application/x-ndjson' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `battle-${new Date().toISOString().slice(0, 10)}-${summary?.tick || 0}ticks.ndjson`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // Get key moments from messages (alerts and important reports)
   const keyMoments = messages
@@ -83,9 +122,16 @@ export function EndScreen({ summary, messages, onNewBattle }: Props) {
           </div>
         )}
 
-        <button className="end-new-battle" onClick={onNewBattle}>
-          New Battle
-        </button>
+        <div className="end-actions">
+          <button className="end-new-battle" onClick={onNewBattle}>
+            New Battle
+          </button>
+          {battleHistory.length > 0 && (
+            <button className="end-export-replay" onClick={handleExportReplay}>
+              📥 Export Replay ({battleHistory.length} frames)
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

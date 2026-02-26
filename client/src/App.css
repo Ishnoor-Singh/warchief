@@ -1411,6 +1411,31 @@ body {
   box-shadow: 0 4px 20px rgba(74, 158, 255, 0.3);
 }
 
+.end-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.end-export-replay {
+  padding: 16px 32px;
+  font-size: 16px;
+  font-weight: 600;
+  background: var(--surface-2);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.end-export-replay:hover {
+  background: var(--surface-3);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
